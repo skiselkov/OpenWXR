@@ -1,0 +1,12 @@
+CMakeCache.txt
+Makefile
+*.cmake
+CMakeFiles
+bin
+.DS_Store
+qmake/object_script.win.xpl.Debug
+qmake/object_script.win.xpl.Release
+qmake/output/
+qmake/win.xpl_resource.rc
+OpenWXR.zip
+OpenWXR
