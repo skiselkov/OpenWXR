@@ -18,9 +18,12 @@ project(openwxr C)
 
 SET(SRC
     dbg_log.c
+    wxr.c
     xplane.c)
 SET(HDR
     dbg_log.h
+    wxr.h
+    atmo.h
     xplane.h)
 
 SET(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELEASE} -DDEBUG -g")

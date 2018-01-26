@@ -138,7 +138,7 @@ XPluginStart(char *name, char *sig, char *desc)
 		conf = conf_create_empty();
 	dbg_log_init(conf);
 	conf_free(conf);
-	free(confpath);
+	lacf_free(confpath);
 
 	return (1);
 }
@@ -173,7 +173,8 @@ get_xpdir(void)
 	return (xpdir);
 }
 
-const char *get_plugindir(void)
+const char *
+get_plugindir(void)
 {
 	return (plugindir);
 }
