@@ -53,6 +53,10 @@ struct wxr_s {
 	unsigned		cur_range;
 	double			gain;
 	double			ant_pitch_req;
+	unsigned		azi_lim_left;
+	unsigned		azi_lim_right;
+	double			pitch_stab;
+	double			roll_stab;
 
 	/* only accessed from worker thread */
 	unsigned		ant_pos;
@@ -85,17 +89,20 @@ wxr_worker(void *userinfo)
 	mutex_exit(&wxr->lock);
 
 	for (unsigned i = 0;
-	    i < (unsigned)(wxr->conf->res_x * USEC2SEC(WORKER_INTVAL)); i++) {
+	    i < (unsigned)(wxr->conf->res_x * (USEC2SEC(WORKER_INTVAL) /
+	    wxr->conf->scan_time)); i++) {
 		double ant_hdg;
 
 		/* Move the antenna by one notch left/right */
 		if (wxr->scan_right) {
 			wxr->ant_pos++;
-			if (wxr->ant_pos == wxr->conf->res_x - 1)
+			if (wxr->ant_pos == wxr->conf->res_x - 1 ||
+			    wxr->ant_pos == wxr->azi_lim_right)
 				wxr->scan_right = B_FALSE;
 		} else {
 			wxr->ant_pos--;
-			if (wxr->ant_pos == 0)
+			if (wxr->ant_pos == 0 ||
+			    wxr->ant_pos == wxr->azi_lim_left)
 				wxr->scan_right = B_TRUE;
 		}
 
@@ -138,8 +145,10 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 
 	wxr->conf = conf;
 	wxr->atmo = atmo;
+	wxr->gain = 1.0;
 	wxr->samples = calloc(conf->res_x * conf->res_y, 1);
 	wxr->ant_pos = conf->res_x / 2;
+	wxr->azi_lim_right = conf->res_x - 1;
 	wxr->sl.energy_out = calloc(wxr->conf->res_y, sizeof (double));
 	wxr->sl.doppler_out = calloc(wxr->conf->res_y, sizeof (double));
 	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
@@ -186,6 +195,19 @@ wxr_set_scale(wxr_t *wxr, unsigned range_idx)
 }
 
 void
+wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right)
+{
+	ASSERT3U(left, <, wxr->conf->res_x);
+	ASSERT3U(right, <, wxr->conf->res_x);
+	ASSERT3U(left, <, right);
+
+	mutex_enter(&wxr->lock);
+	wxr->azi_lim_left = left;
+	wxr->azi_lim_right = right;
+	mutex_exit(&wxr->lock);
+}
+
+void
 wxr_set_pitch(wxr_t *wxr, double angle)
 {
 	ASSERT3F(angle, <=, 90);
@@ -204,6 +226,26 @@ wxr_set_gain(wxr_t *wxr, double gain)
 
 	mutex_enter(&wxr->lock);
 	wxr->gain = gain;
+	mutex_exit(&wxr->lock);
+}
+
+/*
+ * Sets how many degrees the radar auto-compensates for pitching and rolling
+ * of the aircraft by counter-pitching & tilting the radar antenna to
+ * maintain constant absolute antenna pitch & scanning across the horizon.
+ * Pass 0 for either value for no stabilization.
+ */
+void
+wxr_set_stab(wxr_t *wxr, double pitch, double roll)
+{
+	ASSERT3F(pitch, >=, 0);
+	ASSERT3F(pitch, <=, 90);
+	ASSERT3F(roll, >=, 0);
+	ASSERT3F(roll, <=, 90);
+
+	mutex_enter(&wxr->lock);
+	wxr->pitch_stab = pitch;
+	wxr->roll_stab = roll;
 	mutex_exit(&wxr->lock);
 }
 
@@ -246,8 +288,8 @@ wxr_get_cur_tex(wxr_t *wxr)
 		if (ptr != NULL) {
 			memcpy(ptr, wxr->samples, sz);
 			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-			wxr->upload_sync = glFenceSync(
-			    GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+			wxr->upload_sync =
+			    glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		} else {
 			logMsg("Error uploading WXR instance %p: "
 			    "glMapBuffer returned NULL", wxr);

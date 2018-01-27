@@ -36,10 +36,12 @@
 #include <acfutils/time.h>
 #include <acfutils/thread.h>
 
+#include "atmo_xp11.h"
 #include "dbg_log.h"
+#include "../openwxr/xplane_api.h"
+#include "wxr.h"
 
 #define	PLUGIN_NAME		"OpenWXR by Saso Kiselkov"
-#define	OPENWXR_PLUGIN_SIG	"skiselkov.openwxr"
 #define	PLUGIN_DESCRIPTION \
 	"An open-source generic weather radar simulation"
 
@@ -48,6 +50,19 @@ char			plugindir[512];
 
 int			xp_ver, xplm_ver;
 XPLMHostApplicationID	host_id;
+static atmo_t		*atmo = NULL;
+
+static openwxr_intf_t openwxr_intf = {
+	.init = wxr_init,
+	.fini = wxr_fini,
+	.set_acf_pos = wxr_set_acf_pos,
+	.set_scale = wxr_set_scale,
+	.set_azimuth_limits = wxr_set_azimuth_limits,
+	.set_pitch = wxr_set_pitch,
+	.set_gain = wxr_set_gain,
+	.set_stab = wxr_set_stab,
+	.draw = wxr_draw
+};
 
 PLUGIN_API int
 XPluginStart(char *name, char *sig, char *desc)
@@ -140,12 +155,24 @@ XPluginStart(char *name, char *sig, char *desc)
 	conf_free(conf);
 	lacf_free(confpath);
 
+	/*
+	 * Must go ahead of XPluginEnable to always have an atmosphere
+	 * ready for when external avionics start creating wxr_t instances.
+	 */
+	atmo = atmo_xp11_init();
+
 	return (1);
 }
 
 PLUGIN_API void
 XPluginStop(void)
 {
+	/*
+	 * Must wait with shutdown until all instances of wxr_t have
+	 * been shut down by external avionics, so we can't do this
+	 * in XPluginDisable.
+	 */
+	atmo_xp11_fini();
 }
 
 PLUGIN_API int
@@ -163,8 +190,18 @@ PLUGIN_API void
 XPluginReceiveMessage(XPLMPluginID from, int msg, void *param)
 {
 	UNUSED(from);
-	UNUSED(msg);
-	UNUSED(param);
+
+	switch (msg) {
+	case OPENWXR_INTF_GET:
+		ASSERT(param != NULL);
+		*(openwxr_intf_t **)param = &openwxr_intf;
+		break;
+	case OPENWXR_ATMO_GET:
+		ASSERT(param != NULL);
+		ASSERT(atmo != NULL);
+		*(atmo_t **)param = atmo;
+		break;
+	}
 }
 
 const char *

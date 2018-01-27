@@ -22,82 +22,23 @@
 #include <acfutils/geom.h>
 
 #include "atmo.h"
+#include "../openwxr/wxr_intf.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define	WXR_MIN_RES	32
-#define	WXR_MAX_RANGES	32
-
 typedef struct wxr_s wxr_t;
-
-typedef enum {
-	WXR_DISP_ARC,
-	WXR_DISP_SQUARE
-} wxr_disp_t;
-
-/*
- * The main WXR configuration structure. This must be passed by te aircraft
- * to set up a WXR instance of OpenWXR.
- */
-typedef struct {
-	/* Number of range scales contained in `ranges' */
-	size_t		num_ranges;
-	/*
-	 * The range scales at which the screen of the WXR can draw. This
-	 * determines the sampling interval of the underlying weather so
-	 * as to avoid excessive sample density and the associated
-	 * performance cost.
-	 */
-	double		ranges[WXR_MAX_RANGES];
-	/*
-	 * WXR weather sampling resolution.
-	 *
-	 * res_x - the number of radial samples sent out by the antenna as it
-	 *	scans left-to-right. This is NOT screen resolution, although
-	 *	in general you will probably want your radial resolution to
-	 *	be close to the actual screen resolution, so that the WXR
-	 *	samples don't appear too blobby and large on the screen.
-	 * res_y - the number of samples along a radar scan line. This should
-	 *	be close to the screen resolution to avoid "blobby" looks, but
-	 *	is again not its physical meaning. This means at what
-	 *	resolution the WXR talks to the atmosphere to determine
-	 *	reflected energy along a scan line.
-	 */
-	unsigned	res_x;
-	unsigned	res_y;
-	/*
-	 * The beam cone shape:
-	 * X - side-to-side angle of the radar beam
-	 * Y - up-down angle of the radar beam
-	 * These do NOT represent the radar's scan limit (i.e. how far the
-	 * antenna can swing). They represent the spacial size of one radar
-	 * pulse (once sent out).
-	 */
-	vect2_t		beam_shape;
-	
-	wxr_disp_t	disp_type;	/* The of radar display to draw. */
-	double		scan_time;	/* Secs for one full swing side2side */
-	double		scan_angle;	/* Degrees btwn full lateral deflect */
-	/*
-	 * Sets how many degrees the radar auto-compensates for pitching of
-	 * the aircraft by counter-pitching the radar antenna to maintain
-	 * constant absolute antenna pitch. Pass 0 for no pitch compensation.
-	 */
-	double		pitch_compens_lim_up;
-	double		pitch_compens_lim_down;
-	/* Same as pitch_compens_lim, but for roll. */
-	bool_t		roll_compens_lim;
-} wxr_conf_t;
 
 wxr_t *wxr_init(const wxr_conf_t *conf, const atmo_t *atmo);
 void wxr_fini(wxr_t *wxr);
 
 void wxr_set_acf_pos(wxr_t *wxr, geo_pos3_t pos, vect3_t orient);
 void wxr_set_scale(wxr_t *wxr, unsigned range_idx);
+void wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right);
 void wxr_set_pitch(wxr_t *wxr, double angle);
 void wxr_set_gain(wxr_t *wxr, double gain);
+void wxr_set_stab(wxr_t *wxr, double angle, double roll);
 void wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size);
 
 #ifdef __cplusplus

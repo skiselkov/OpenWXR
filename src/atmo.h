@@ -36,7 +36,8 @@ typedef struct {
 	double		*doppler_out;	/* freq shift, relative motion, m/s */
 } scan_line_t;
 
-typedef struct {
+typedef struct atmo_s {
+	void		(*set_range)(double rng);
 	void		(*probe)(scan_line_t *sl);
 } atmo_t;
 

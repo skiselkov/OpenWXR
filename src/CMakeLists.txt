@@ -17,13 +17,15 @@ cmake_minimum_required(VERSION 2.8)
 project(openwxr C)
 
 SET(SRC
+    atmo_xp11.c
     dbg_log.c
     wxr.c
     xplane.c)
 SET(HDR
+    atmo.h
+    atmo_xp11.h
     dbg_log.h
     wxr.h
-    atmo.h
     xplane.h)
 
 SET(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELEASE} -DDEBUG -g")
