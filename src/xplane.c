@@ -57,10 +57,15 @@ static openwxr_intf_t openwxr_intf = {
 	.fini = wxr_fini,
 	.set_acf_pos = wxr_set_acf_pos,
 	.set_scale = wxr_set_scale,
+	.get_scale = wxr_get_scale,
 	.set_azimuth_limits = wxr_set_azimuth_limits,
+	.get_ant_azimuth = wxr_get_ant_azimuth,
 	.set_pitch = wxr_set_pitch,
+	.get_ant_pitch = wxr_get_ant_pitch,
 	.set_gain = wxr_set_gain,
+	.get_gain = wxr_get_gain,
 	.set_stab = wxr_set_stab,
+	.get_stab = wxr_get_stab,
 	.draw = wxr_draw
 };
 
@@ -201,6 +206,12 @@ XPluginReceiveMessage(XPLMPluginID from, int msg, void *param)
 		ASSERT(atmo != NULL);
 		*(atmo_t **)param = atmo;
 		break;
+	case OPENWXR_ATMO_XP11_SET_EFIS: {
+		unsigned *coords = param;
+		atmo_xp11_set_efis_pos(coords[0], coords[1],
+		    coords[2], coords[3]);
+		break;
+	}
 	}
 }
 

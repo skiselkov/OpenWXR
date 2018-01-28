@@ -36,15 +36,20 @@ typedef struct {
 
 	void (*set_acf_pos)(wxr_t *wxr, geo_pos3_t pos, vect3_t orient);
 	void (*set_scale)(wxr_t *wxr, unsigned range_idx);
+	unsigned (*get_scale)(const wxr_t *wxr);
 	void (*set_azimuth_limits)(wxr_t *wxr, unsigned left, unsigned right);
+	double (*get_ant_azimuth)(const wxr_t *wxr);
 	void (*set_pitch)(wxr_t *wxr, double angle);
+	double (*get_ant_pitch)(const wxr_t *wxr);
 	void (*set_gain)(wxr_t *wxr, double gain);
+	double (*get_gain)(const wxr_t *wxr);
 	void (*set_stab)(wxr_t *wxr, double angle, double roll);
+	void (*get_stab)(const wxr_t *wxr, bool_t *pitch, bool_t *roll);
 	void (*draw)(wxr_t *wxr, vect2_t pos, vect2_t size);
 } openwxr_intf_t;
 
 typedef enum {
-	OPENWXR_ATMO_XP11_SET_GAUGE = 0x20000,	/* int coords[4] arg */
+	OPENWXR_ATMO_XP11_SET_EFIS = 0x20000,	/* int coords[4] arg */
 	OPENWXR_INTF_GET,			/* openwxr_intf_t ** arg */
 	OPENWXR_ATMO_GET			/* atmo_t ** arg */
 } openwxr_msg_t;

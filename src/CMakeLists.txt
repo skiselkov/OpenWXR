@@ -147,8 +147,8 @@ else()
 	    ${LIBACFUTILS}/freetype/freetype-linux-64/lib
 	    ${LIBACFUTILS}/cairo/pixman-linux-64/lib
 	    ${LIBACFUTILS}/cairo/cairo-linux-64/lib
-	    ${LIBACFUTILS}/zlib/zlib-linux-64/lib
 	    ${LIBACFUTILS}/libpng/libpng-linux-64/lib
+	    ${LIBACFUTILS}/zlib/zlib-linux-64/lib
 	    ${LIBACFUTILS}/lzma/qmake/linux-64)
 	FIND_LIBRARY(LIBACFUTILS_LIBRARY acfutils)
 	FIND_LIBRARY(OPUSFILE_LIBRARY opusfile)
@@ -158,7 +158,7 @@ else()
 	FIND_LIBRARY(PIXMAN_LIBRARY pixman-1)
 	FIND_LIBRARY(CAIRO_LIBRARY cairo)
 	FIND_LIBRARY(LIBPNG_LIBRARY png16)
-	FIND_LIBRARY(ZLIB_LIBRARY z)
+	FIND_LIBRARY(ZLIB_LIBRARY z ${LIBACFUTILS}/zlib/zlib-linux-64/lib)
 	FIND_LIBRARY(LZMA_LIBRARY lzma)
 	FIND_LIBRARY(PTHREAD_NONSHARED pthread_nonshared)
 	FIND_LIBRARY(LIBC_NONSHARED c_nonshared)
@@ -193,7 +193,8 @@ else()
 	    OUTPUT_VARIABLE LIBACFUTILS_DEP_LDFLAGS)
 	SET_TARGET_PROPERTIES(openwxr PROPERTIES LINK_FLAGS
 	    "${CMAKE_SHARED_LINKER_FLAGS} -rdynamic -nodefaultlibs \
-	    -undefined_warnsing -fPIC -fvisibility=hidden")
+	    -undefined_warnsing -fPIC -fvisibility=hidden \
+	    ${LIBACFUTILS}/zlib/zlib-linux-64/lib/libz.a")
 endif()
 
 set_target_properties(openwxr PROPERTIES RUNTIME_OUTPUT_DIRECTORY

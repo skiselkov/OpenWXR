@@ -34,12 +34,22 @@ wxr_t *wxr_init(const wxr_conf_t *conf, const atmo_t *atmo);
 void wxr_fini(wxr_t *wxr);
 
 void wxr_set_acf_pos(wxr_t *wxr, geo_pos3_t pos, vect3_t orient);
-void wxr_set_scale(wxr_t *wxr, unsigned range_idx);
-void wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right);
-void wxr_set_pitch(wxr_t *wxr, double angle);
-void wxr_set_gain(wxr_t *wxr, double gain);
-void wxr_set_stab(wxr_t *wxr, double angle, double roll);
 void wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size);
+
+void wxr_set_scale(wxr_t *wxr, unsigned range_idx);
+unsigned wxr_get_scale(const wxr_t *wxr);
+
+void wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right);
+double wxr_get_ant_azimuth(const wxr_t *wxr);
+
+void wxr_set_pitch(wxr_t *wxr, double angle);
+double wxr_get_ant_pitch(const wxr_t *wxr);
+
+void wxr_set_gain(wxr_t *wxr, double gain);
+double wxr_get_gain(const wxr_t *wxr);
+
+void wxr_set_stab(wxr_t *wxr, double pitch, double roll);
+void wxr_get_stab(const wxr_t *wxr, bool_t *pitch, bool_t *roll);
 
 #ifdef __cplusplus
 }

@@ -27,6 +27,7 @@ extern "C" {
 
 typedef struct {
 	geo_pos3_t	origin;		/* beam origin point */
+	double		ant_rhdg;	/* rel antenna hdg from aircraft */
 	vect2_t		dir;		/* X-hdg degrees, Y-pitch degrees up */
 	vect2_t		shape;		/* X-horiz degrees, Y-vert degrees */
 	double		energy;		/* beam energy (no units), log scale */

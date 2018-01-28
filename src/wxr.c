@@ -46,6 +46,12 @@ struct wxr_s {
 	GLsync			upload_sync;
 	uint64_t		last_upload;
 
+	vect2_t			draw_pos;
+	vect2_t			draw_size;
+	size_t			draw_num_coords;
+	GLfloat			*draw_vtx_coords;
+	GLfloat			*draw_tex_coords;
+
 	mutex_t			lock;
 	/* protected by lock above */
 	geo_pos3_t		acf_pos;
@@ -73,17 +79,16 @@ static bool_t
 wxr_worker(void *userinfo)
 {
 	wxr_t *wxr = userinfo;
-	scan_line_t sl;
 	double ant_pitch, acf_hdg;
 
 	mutex_enter(&wxr->lock);
 
-	sl.origin = wxr->acf_pos;
-	sl.shape = wxr->conf->beam_shape;
-	sl.energy = MAX_BEAM_ENERGY * wxr->gain;
-	sl.range = wxr->conf->ranges[wxr->cur_range];
-	sl.num_samples = wxr->conf->res_y;
-	ant_pitch = wxr->acf_orient.x + wxr->ant_pitch_req;
+	wxr->sl.origin = wxr->acf_pos;
+	wxr->sl.shape = wxr->conf->beam_shape;
+	wxr->sl.energy = MAX_BEAM_ENERGY * wxr->gain;
+	wxr->sl.range = wxr->conf->ranges[wxr->cur_range];
+	wxr->sl.num_samples = wxr->conf->res_y;
+	ant_pitch = wxr->ant_pitch_req;
 	acf_hdg = wxr->acf_orient.y;
 
 	mutex_exit(&wxr->lock);
@@ -92,6 +97,7 @@ wxr_worker(void *userinfo)
 	    i < (unsigned)(wxr->conf->res_x * (USEC2SEC(WORKER_INTVAL) /
 	    wxr->conf->scan_time)); i++) {
 		double ant_hdg;
+		int off;
 
 		/* Move the antenna by one notch left/right */
 		if (wxr->scan_right) {
@@ -106,24 +112,24 @@ wxr_worker(void *userinfo)
 				wxr->scan_right = B_TRUE;
 		}
 
-		ant_hdg = acf_hdg + (wxr->conf->scan_angle *
-		    ((wxr->ant_pos / (double)wxr->conf->res_x) - 0.5));
-		sl.dir = VECT2(ant_hdg, ant_pitch);
+		off = wxr->ant_pos * wxr->conf->res_y;
 
-		wxr->atmo->probe(&sl);
+		wxr->sl.ant_rhdg = (wxr->conf->scan_angle *
+		    ((wxr->ant_pos / (double)wxr->conf->res_x) - 0.5));
+		ant_hdg = acf_hdg + wxr->sl.ant_rhdg;
+		wxr->sl.dir = VECT2(ant_hdg, ant_pitch);
+
+		wxr->atmo->probe(&wxr->sl);
 
 		/*
 		 * No need to lock the samples, worst case is we will
 		 * draw a partially updated scan line - no big deal.
 		 */
 		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
-			wxr->samples[j] =
-			    (sl.energy_out[j] / MAX_BEAM_ENERGY) * UINT8_MAX;
+			wxr->samples[off + j] = (wxr->sl.energy_out[j] /
+			    MAX_BEAM_ENERGY) * UINT8_MAX;
 		}
 	}
-
-	free(sl.energy_out);
-	free(sl.doppler_out);
 
 	return (B_TRUE);
 }
@@ -146,11 +152,16 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->conf = conf;
 	wxr->atmo = atmo;
 	wxr->gain = 1.0;
+	/*
+	 * 4 vertices per quad, 2 coords per vertex
+	 */
+	wxr->draw_num_coords = 4 * 2 * ceil(conf->scan_angle);
 	wxr->samples = calloc(conf->res_x * conf->res_y, 1);
 	wxr->ant_pos = conf->res_x / 2;
 	wxr->azi_lim_right = conf->res_x - 1;
 	wxr->sl.energy_out = calloc(wxr->conf->res_y, sizeof (double));
 	wxr->sl.doppler_out = calloc(wxr->conf->res_y, sizeof (double));
+	wxr->atmo->set_range(wxr->conf->ranges[0]);
 	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
 
 	return (wxr);
@@ -163,6 +174,9 @@ wxr_fini(wxr_t *wxr)
 		glDeleteTextures(2, wxr->tex);
 	if (wxr->pbo != 0)
 		glDeleteBuffers(1, &wxr->pbo);
+
+	free(wxr->draw_vtx_coords);
+	free(wxr->draw_tex_coords);
 
 	free(wxr->samples);
 	free(wxr->sl.energy_out);
@@ -187,11 +201,22 @@ wxr_set_acf_pos(wxr_t *wxr, geo_pos3_t pos, vect3_t orient)
 void
 wxr_set_scale(wxr_t *wxr, unsigned range_idx)
 {
+	double range;
+
 	ASSERT3U(range_idx, <, wxr->conf->num_ranges);
 
 	mutex_enter(&wxr->lock);
 	wxr->cur_range = range_idx;
+	range = wxr->conf->ranges[wxr->cur_range];
 	mutex_exit(&wxr->lock);
+
+	wxr->atmo->set_range(range);
+}
+
+unsigned
+wxr_get_scale(const wxr_t *wxr)
+{
+	return (wxr->cur_range);
 }
 
 void
@@ -207,6 +232,13 @@ wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right)
 	mutex_exit(&wxr->lock);
 }
 
+double
+wxr_get_ant_azimuth(const wxr_t *wxr)
+{
+	return ((((double)wxr->ant_pos / wxr->conf->res_x) - 0.5) *
+	    wxr->conf->scan_angle);
+}
+
 void
 wxr_set_pitch(wxr_t *wxr, double angle)
 {
@@ -218,6 +250,13 @@ wxr_set_pitch(wxr_t *wxr, double angle)
 	mutex_exit(&wxr->lock);
 }
 
+double
+wxr_get_ant_pitch(const wxr_t *wxr)
+{
+	/* TODO: this is broken */
+	return (wxr->ant_pitch_req);
+}
+
 void
 wxr_set_gain(wxr_t *wxr, double gain)
 {
@@ -227,6 +266,12 @@ wxr_set_gain(wxr_t *wxr, double gain)
 	mutex_enter(&wxr->lock);
 	wxr->gain = gain;
 	mutex_exit(&wxr->lock);
+}
+
+double
+wxr_get_gain(const wxr_t *wxr)
+{
+	return (wxr->gain);
 }
 
 /*
@@ -249,6 +294,13 @@ wxr_set_stab(wxr_t *wxr, double pitch, double roll)
 	mutex_exit(&wxr->lock);
 }
 
+void
+wxr_get_stab(const wxr_t *wxr, bool_t *pitch, bool_t *roll)
+{
+	*pitch = wxr->pitch_stab;
+	*roll = wxr->roll_stab;
+}
+
 GLuint
 wxr_get_cur_tex(wxr_t *wxr)
 {
@@ -268,8 +320,9 @@ wxr_get_cur_tex(wxr_t *wxr)
 			XPLMBindTexture2d(wxr->tex[wxr->cur_tex],
 			    GL_TEXTURE_2D);
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, wxr->pbo);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_R, wxr->conf->res_x,
-			    wxr->conf->res_y, 0, GL_R, GL_UNSIGNED_BYTE, NULL);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+			    wxr->conf->res_x, wxr->conf->res_y, 0, GL_RED,
+			    GL_UNSIGNED_BYTE, NULL);
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		}
 	} else {
@@ -325,31 +378,98 @@ wxr_bind_tex(wxr_t *wxr)
 			    GL_LINEAR);
 		}
 		XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R,
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
 		    wxr->conf->res_x, wxr->conf->res_y, 0,
-		    GL_R, GL_UNSIGNED_BYTE, wxr->samples);
+		    GL_RED, GL_UNSIGNED_BYTE, wxr->samples);
+	}
+}
+
+static void
+wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size)
+{
+	if (wxr->draw_vtx_coords == NULL) {
+		wxr->draw_vtx_coords = calloc(wxr->draw_num_coords,
+		    sizeof (*wxr->draw_vtx_coords));
+		wxr->draw_tex_coords = calloc(wxr->draw_num_coords,
+		    sizeof (*wxr->draw_tex_coords));
+	}
+
+	for (unsigned i = 0, j = 0; i < wxr->draw_num_coords; i += 4 * 2, j++) {
+		/* Draw 1-degree increments */
+		double fract1 = (double)j / wxr->conf->scan_angle;
+		double fract2 = (double)(j + 1) / wxr->conf->scan_angle;
+		double angle1 = DEG2RAD((fract1 * wxr->conf->scan_angle) -
+		    (wxr->conf->scan_angle / 2));
+		double angle2 = DEG2RAD((fract1 * wxr->conf->scan_angle) -
+		    (wxr->conf->scan_angle / 2) + 1);
+
+		/*
+		 * Draw the quad in clockwise vertex order.
+		 */
+
+		/* lower-left */
+		wxr->draw_vtx_coords[i] = pos.x + size.x / 2;
+		wxr->draw_tex_coords[i] = 0;
+
+		wxr->draw_vtx_coords[i + 1] = pos.y;
+		wxr->draw_tex_coords[i + 1] = fract1;
+
+		/* upper-left */
+		wxr->draw_vtx_coords[i + 2] = (pos.x + size.x / 2) +
+		    (sin(angle1) * (size.x / 2));
+		wxr->draw_tex_coords[i + 2] = 1;
+
+		wxr->draw_vtx_coords[i + 3] = pos.y + (cos(angle1) * size.y);
+		wxr->draw_tex_coords[i + 3] = fract1;
+
+		/* upper-right */
+		wxr->draw_vtx_coords[i + 4] = (pos.x + size.x / 2) +
+		    (sin(angle2) * (size.x / 2));
+		wxr->draw_tex_coords[i + 4] = 1;
+
+		wxr->draw_vtx_coords[i + 5] = pos.y + (cos(angle2) * size.y);
+		wxr->draw_tex_coords[i + 5] = fract2;
+
+		/* lower-right */
+		wxr->draw_vtx_coords[i + 6] = pos.x + size.x / 2;
+		wxr->draw_tex_coords[i + 6] = 0;
+
+		wxr->draw_vtx_coords[i + 7] = pos.y;
+		wxr->draw_tex_coords[i + 7] = fract2;
 	}
 }
 
 static void
 wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
-	UNUSED(wxr);
-	UNUSED(pos);
-	UNUSED(size);
+	if (!VECT2_EQ(pos, wxr->draw_pos) || !VECT2_EQ(size, wxr->draw_size)) {
+		wxr_draw_arc_recache(wxr, pos, size);
+		wxr->draw_pos = pos;
+		wxr->draw_size = size;
+	}
+
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+
+	glVertexPointer(2, GL_FLOAT, 0, wxr->draw_vtx_coords);
+	glTexCoordPointer(2, GL_FLOAT, 0, wxr->draw_tex_coords);
+	glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords / 2);
+
+	glDisableClientState(GL_VERTEX_ARRAY);
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
 static void
 wxr_draw_square(vect2_t pos, vect2_t size)
 {
 	glBegin(GL_QUADS);
-	glTexCoord2f(0, 1);
-	glVertex2f(pos.x, pos.y);
 	glTexCoord2f(0, 0);
-	glVertex2f(pos.x, pos.y + size.y);
+	glVertex2f(pos.x, pos.y);
 	glTexCoord2f(1, 0);
-	glVertex2f(pos.x + size.x, pos.y + size.y);
+	glVertex2f(pos.x, pos.y + size.y);
 	glTexCoord2f(1, 1);
+	glVertex2f(pos.x + size.x, pos.y + size.y);
+	glTexCoord2f(0, 1);
 	glVertex2f(pos.x + size.x, pos.y);
 	glEnd();
 }
@@ -357,6 +477,8 @@ wxr_draw_square(vect2_t pos, vect2_t size)
 void
 wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
+	glGetError();
+	XPLMSetGraphicsState(0, 1, 0, 1, 1, 1, 1);
 	wxr_bind_tex(wxr);
 	if (wxr->conf->disp_type == WXR_DISP_ARC) {
 		wxr_draw_arc(wxr, pos, size);
