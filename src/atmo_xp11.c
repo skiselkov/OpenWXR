@@ -21,27 +21,31 @@
 
 #include <GL/glew.h>
 
+#include <XPLMGraphics.h>
 #include <XPLMDisplay.h>
 
 #include <acfutils/assert.h>
 #include <acfutils/dr.h>
 #include <acfutils/geom.h>
 #include <acfutils/helpers.h>
+#include <acfutils/math.h>
 #include <acfutils/perf.h>
 #include <acfutils/png.h>
+#include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
 
 #include "atmo_xp11.h"
 #include "xplane.h"
 
-#define	UPD_INTVAL	500000		/* us */
+#define	UPD_INTVAL	1000000		/* us */
 
 #define	EFIS_WIDTH	194
 #define	EFIS_LAT_PIX	(EFIS_WIDTH / 2)
 #define	EFIS_LON_AFT	134
 #define	EFIS_LON_FWD	134
 #define	EFIS_HEIGHT	(EFIS_LON_FWD + EFIS_LON_AFT)
+#define	WX_SMOOTH_RNG	300		/* meters */
 
 static void atmo_xp11_set_range(double range);
 static void atmo_xp11_probe(scan_line_t *sl);
@@ -86,6 +90,7 @@ static struct {
 	/* protected by lock */
 	uint32_t	*pixels;
 	double		range;
+	vect2_t		precip_nodes[5];
 
 	/* only accessed by foreground drawing thread */
 	uint64_t	last_update;
@@ -94,7 +99,11 @@ static struct {
 	unsigned	efis_w;
 	unsigned	efis_h;
 	GLuint		pbo;
+	GLuint		tmp_tex[3];
+	GLuint		tmp_fbo[3];
 	GLsync		xfer_sync;
+	GLuint		smooth_prog;
+	GLuint		cleanup_prog;
 } xp11_atmo;
 
 typedef enum {
@@ -119,6 +128,10 @@ static struct {
 	dr_t	shear_spd[3];		/* knots */
 	dr_t	turb;			/* ratio 0..1 */
 	dr_t	render_type;
+
+	dr_t	temp_sl;
+	dr_t	temp_tropo;
+	dr_t	alt_tropo;
 
 	struct {
 		dr_t	mode;
@@ -146,13 +159,32 @@ atmo_xp11_set_range(double range)
 static void
 atmo_xp11_probe(scan_line_t *sl)
 {
+#define	COST_PER_1KM	0.025
 	double range;
 	double sin_rhdg = sin(DEG2RAD(sl->ant_rhdg));
 	double cos_rhdg = cos(DEG2RAD(sl->ant_rhdg));
 	double sin_pitch = sin(DEG2RAD(sl->dir.y));
+	double sin_pitch_up = sin(DEG2RAD(sl->dir.y + sl->shape.y / 2));
+	double sin_pitch_dn = sin(DEG2RAD(sl->dir.y - sl->shape.y / 2));
+	vect2_t precip_nodes[5];
+	double energy = sl->energy;
+	double sample_sz = sl->range / sl->num_samples;
+	double sample_sz_rat = sample_sz / 1000.0;
+	double cost_per_sample = COST_PER_1KM * sample_sz_rat;
+
+#if 0
+	static time_t last = 0;
+	bool_t report = B_FALSE;
+
+	if (time(NULL) > last) {
+		report = B_TRUE;
+		last = time(NULL);
+	}
+#endif
 
 	mutex_enter(&xp11_atmo.lock);
 	range = xp11_atmo.range;
+	memcpy(precip_nodes, xp11_atmo.precip_nodes, sizeof (precip_nodes));
 	mutex_exit(&xp11_atmo.lock);
 
 	for (int i = 0; i < sl->num_samples; i++) {
@@ -161,15 +193,21 @@ atmo_xp11_probe(scan_line_t *sl)
 		int y = (((double)i + 1) / sl->num_samples) *
 		    (sl->range / range) * EFIS_LON_FWD * cos_rhdg;
 		double d = (((double)i + 1) / sl->num_samples) * sl->range;
+		double z_up = sl->origin.elev + d * sin_pitch_up;
 		double z = sl->origin.elev + d * sin_pitch;
-		int red, green, blue, alpha;
-		int intens;
+		double z_dn = sl->origin.elev + d * sin_pitch_dn;
+		double precip_intens;
+		double precip_intens_up, precip_intens_mid, precip_intens_dn;
+		double energy_cost = 0;
 
 		UNUSED(z);
 
 		x += EFIS_LAT_PIX;
 		y += EFIS_LON_AFT;
 
+		/*
+		 * No doppler radar support yet.
+		 */
 		sl->doppler_out[i] = 0;
 
 		if (x < 0 || x >= EFIS_WIDTH || y < 0 || y >= EFIS_HEIGHT) {
@@ -178,49 +216,47 @@ atmo_xp11_probe(scan_line_t *sl)
 		}
 
 		if (xp11_atmo.pixels != NULL) {
-			uint32_t sample = xp11_atmo.pixels[y * EFIS_WIDTH + x];
-			red = sample & 0xff;
-			green = (sample & 0xff00) >> 8;
-			blue = (sample & 0xff0000) >> 16;
-			alpha = (sample & 0xff000000ul) >> 24;
+			precip_intens = (xp11_atmo.pixels[y * EFIS_WIDTH + x] &
+			    0xff) / 255.0;
 		} else {
-			red = 0;
-			green = 0;
-			blue = 0;
-			alpha = 0;
+			precip_intens = 0.0;
 		}
 
-		if (blue > 0.1 * 255) {
-			if (alpha < 0.95 * 255) {
-				intens = 0;
-			} else if (red > 0.9 * 255 && green > 0.9 * 255) {
-				intens = 3;
-			} else if (red > 0.9 * 255) {
-				intens = 4;
-			} else if (green > 0.9 * 255) {
-				intens = 1;
-			} else if (green > 0.7 * 255) {
-				intens = 2;
-			} else {
-				intens = 0;
-			}
-		} else {
-			if (alpha < 0.95 * 255) {
-				intens = 0;
-			} else if (red > 0.9 * 255 && green > 0.9 * 255) {
-				intens = 3;
-			} else if (red > 0.9 * 255) {
-				intens = 4;
-			} else if (green > 0.8 * 255) {
-				intens = 1;
-			} else if (green > 0.4 * 255) {
-				intens = 2;
-			} else {
-				intens = 0;
-			}
-		}
+		/*
+		 * Compute precip intensity while taking the precip modulation
+		 * nodes into account.
+		 */
+		precip_intens_up = precip_intens *
+		    fx_lin_multi(z_up, precip_nodes, B_FALSE);
+		if (isnan(precip_intens_up))
+			precip_intens_up = 0;
 
-		sl->energy_out[i] = (intens / 4.0) * 100;
+		precip_intens_mid = precip_intens *
+		    fx_lin_multi(z, precip_nodes, B_FALSE);
+		if (isnan(precip_intens_mid))
+			precip_intens_mid = 0;
+
+		precip_intens_dn = precip_intens *
+		    fx_lin_multi(z_dn, precip_nodes, B_FALSE);
+		if (isnan(precip_intens_dn))
+			precip_intens_dn = 0;
+
+		energy_cost = MAX(energy_cost, cost_per_sample *
+		    precip_intens_up * (energy / sl->energy));
+		energy_cost = MAX(energy_cost, cost_per_sample *
+		    precip_intens_mid * (energy / sl->energy));
+		energy_cost = MAX(energy_cost, cost_per_sample *
+		    precip_intens_dn * (energy / sl->energy));
+
+#if 0
+		if (report && i < 20) {
+			printf("i: %.4f  cost: %f\n",
+			    precip_intens_mid, energy_cost);
+		}
+#endif
+
+		sl->energy_out[i] = energy_cost;
+		energy = MAX(0, energy - energy_cost);
 	}
 }
 
@@ -269,11 +305,197 @@ update_efis(void)
 		dr_seti(&drs.EFIS.kill_map_fms_line, 1);
 }
 
+static void
+update_precip(void)
+{
+	double cloud_z[2] = { 0, 0 };
+	double tmp_0_alt, tmp_minus_20_alt;
+	enum { CLOUD_TOP_MARGIN = 50, RAIN_EVAP_MARGIN = 5000 };
+
+	/*
+	 * To compute the location of the freezing level, we use the
+	 * sea-level temperature and tropopause temperature & altitude
+	 * to construct a linear temperature ramp. This is more-or-less
+	 * how temperature decreases with altitude.
+	 */
+	tmp_0_alt = fx_lin(0, dr_getf(&drs.temp_sl), 0,
+	    dr_getf(&drs.temp_tropo), dr_getf(&drs.alt_tropo));
+	tmp_minus_20_alt = fx_lin(-20.0, dr_getf(&drs.temp_sl), 0,
+	    dr_getf(&drs.temp_tropo), dr_getf(&drs.alt_tropo));
+
+	for (int i = 0; i < 3; i++) {
+		/* clear skies or cirrus clouds don't generate precip */
+		if (dr_geti(&drs.cloud_type[i]) <= XP11_CLOUD_HIGH_CIRRUS)
+			continue;
+		cloud_z[0] = MIN(cloud_z[0], dr_getf(&drs.cloud_base[i]));
+		cloud_z[1] = MAX(cloud_z[0], dr_getf(&drs.cloud_tops[i]));
+	}
+
+	/*
+	 * The top of the precip ramp is just above the cloud top.
+	 * The bottom is either at the cloud top minus the margin,
+	 * or in the middle between the cloud top & bottom, whichever
+	 * is higher.
+	 */
+	if (cloud_z[0] == cloud_z[1]) {
+		for (int i = 0; i < 4; i++)
+			xp11_atmo.precip_nodes[i] = VECT2(i, 0);
+	} else {
+		xp11_atmo.precip_nodes[0] =
+		    VECT2(cloud_z[0] - RAIN_EVAP_MARGIN, 1.0);
+		xp11_atmo.precip_nodes[1] = VECT2(cloud_z[0], 1.0);
+		xp11_atmo.precip_nodes[2] =
+		    VECT2(MAX(cloud_z[1] - CLOUD_TOP_MARGIN,
+		    (cloud_z[0] + cloud_z[1] / 2)), 1);
+		xp11_atmo.precip_nodes[3] =
+		    VECT2(cloud_z[1] + CLOUD_TOP_MARGIN, 0);
+
+		for (int i = 0; i < 4; i++) {
+			/*
+			 * Clamp the modulation curve so as not to extend
+			 * above the freezing level. Even if the cloud
+			 * reaches higher, its contents will be completely
+			 * frozen, so WXR won't see them.
+			 */
+			xp11_atmo.precip_nodes[i].y *=
+			    (1 - iter_fract(xp11_atmo.precip_nodes[i].x,
+			    tmp_0_alt, tmp_minus_20_alt, B_TRUE));
+		}
+	}
+
+	fx_lin_multi(0, xp11_atmo.precip_nodes, B_FALSE);
+}
+
+static void
+setup_opengl(void)
+{
+	if (xp11_atmo.pbo == 0) {
+		glGenBuffers(1, &xp11_atmo.pbo);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, xp11_atmo.pbo);
+		glBufferData(GL_PIXEL_PACK_BUFFER, EFIS_WIDTH * EFIS_HEIGHT *
+		    sizeof (*xp11_atmo.pixels), 0, GL_STREAM_READ);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	}
+
+	if (xp11_atmo.tmp_tex[0] == 0) {
+		glGenTextures(3, xp11_atmo.tmp_tex);
+		for (int i = 0; i < 3; i++) {
+			XPLMBindTexture2d(xp11_atmo.tmp_tex[i], GL_TEXTURE_2D);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, EFIS_WIDTH,
+			    EFIS_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+			    GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+			    GL_LINEAR);
+		}
+	}
+
+	if (xp11_atmo.tmp_fbo[0] == 0) {
+		GLint old_fbo;
+
+		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &old_fbo);
+		glGenFramebuffers(3, xp11_atmo.tmp_fbo);
+		for (int i = 0; i < 3; i++) {
+			glBindFramebuffer(GL_FRAMEBUFFER, xp11_atmo.tmp_fbo[i]);
+			glFramebufferTexture(GL_FRAMEBUFFER,
+			    GL_COLOR_ATTACHMENT0, xp11_atmo.tmp_tex[i], 0);
+			VERIFY3U(glCheckFramebufferStatus(GL_FRAMEBUFFER), ==,
+			    GL_FRAMEBUFFER_COMPLETE);
+		}
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, old_fbo);
+	}
+}
+
+static void
+transfer_new_efis_frame(void)
+{
+	double range = efis_map_ranges[MIN((unsigned)dr_geti(&drs.EFIS.range),
+	    EFIS_MAP_RANGE_640NM)];
+	GLint old_read_fbo, old_draw_fbo;
+
+	XPLMSetGraphicsState(0, 1, 0, 1, 1, 1, 1);
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &old_read_fbo);
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &old_draw_fbo);
+
+	/*
+	 * Step 1: transfer the EFIS screen FBO into the input FBO.
+	 */
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, old_read_fbo);
+	glReadBuffer(GL_COLOR_ATTACHMENT0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, xp11_atmo.tmp_fbo[0]);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glDrawBuffer(GL_COLOR_ATTACHMENT0);
+	glBlitFramebuffer(xp11_atmo.efis_x, xp11_atmo.efis_y,
+	    xp11_atmo.efis_x + EFIS_WIDTH, xp11_atmo.efis_y + EFIS_HEIGHT,
+	    0, 0, EFIS_WIDTH, EFIS_HEIGHT, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+	/*
+	 * Step 2: pass the EFIS output through a cleanup shader to
+	 * get rid of the EFIS symbology.
+	 */
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, xp11_atmo.tmp_fbo[1]);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glActiveTexture(GL_TEXTURE0);
+	XPLMBindTexture2d(xp11_atmo.tmp_tex[0], GL_TEXTURE_2D);
+
+	glUseProgram(xp11_atmo.cleanup_prog);
+	glUniform1i(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex"), 0);
+	glUniform2f(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex_sz"),
+	    EFIS_WIDTH, EFIS_HEIGHT);
+
+	glBegin(GL_QUADS);
+	glVertex2f(0, 0);
+	glVertex2f(0, EFIS_HEIGHT);
+	glVertex2f(EFIS_WIDTH, EFIS_HEIGHT);
+	glVertex2f(EFIS_WIDTH, 0);
+	glEnd();
+
+	/*
+	 * Step 3: smooth the EFIS output to get a more sensible
+	 * representation of precip intensity (rather than just
+	 * using the pre-rendered colors as a fixed value.
+	 */
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, xp11_atmo.tmp_fbo[2]);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glActiveTexture(GL_TEXTURE0);
+	XPLMBindTexture2d(xp11_atmo.tmp_tex[1], GL_TEXTURE_2D);
+
+	glUseProgram(xp11_atmo.smooth_prog);
+	glUniform1i(glGetUniformLocation(xp11_atmo.smooth_prog, "tex"), 0);
+	glUniform2f(glGetUniformLocation(xp11_atmo.smooth_prog, "tex_sz"),
+	    EFIS_WIDTH, EFIS_HEIGHT);
+	glUniform1f(glGetUniformLocation(xp11_atmo.smooth_prog, "smooth"),
+	    WX_SMOOTH_RNG / range);
+
+	glBegin(GL_QUADS);
+	glVertex2f(0, 0);
+	glVertex2f(0, EFIS_HEIGHT);
+	glVertex2f(EFIS_WIDTH, EFIS_HEIGHT);
+	glVertex2f(EFIS_WIDTH, 0);
+	glEnd();
+
+	glUseProgram(0);
+
+	/*
+	 * Step 4: set up transfer of the output FBO back to the CPU.
+	 */
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, xp11_atmo.tmp_fbo[2]);
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, xp11_atmo.pbo);
+	glReadPixels(0, 0, EFIS_WIDTH, EFIS_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+	    NULL);
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+	/*
+	 * Step 5: restore the FBO state of X-Plane.
+	 */
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, old_read_fbo);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, old_draw_fbo);
+}
+
 static int
 update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 {
 	uint64_t now;
-
 	UNUSED(phase);
 	UNUSED(before);
 	UNUSED(refcon);
@@ -286,6 +508,9 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 
 	mutex_enter(&xp11_atmo.lock);
 
+	update_efis();
+	update_precip();
+
 	if (xp11_atmo.pixels == NULL) {
 		if (xp11_atmo.efis_w == 0 || xp11_atmo.efis_h == 0)
 			goto out;
@@ -293,13 +518,7 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 		    sizeof (*xp11_atmo.pixels));
 	}
 
-	if (xp11_atmo.pbo == 0) {
-		glGenBuffers(1, &xp11_atmo.pbo);
-		glBindBuffer(GL_PIXEL_PACK_BUFFER, xp11_atmo.pbo);
-		glBufferData(GL_PIXEL_PACK_BUFFER, EFIS_WIDTH * EFIS_HEIGHT *
-		    sizeof (*xp11_atmo.pixels), 0, GL_STREAM_READ);
-		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-	}
+	setup_opengl();
 
 	now = microclock();
 	if (xp11_atmo.xfer_sync != 0) {
@@ -307,7 +526,7 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 		    GL_TIMEOUT_EXPIRED) {
 			void *ptr;
 
-			/* Latest WXR image transfer is complete */
+			/* Latest WXR image transfer is complete, fetch it */
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, xp11_atmo.pbo);
 			ptr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
 			if (ptr != NULL) {
@@ -317,25 +536,13 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 			}
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 			xp11_atmo.xfer_sync = 0;
-
-#if 0
-			char *path = mkpathname(get_xpdir(), "test.png", NULL);
-			png_write_to_file_rgba(path, EFIS_WIDTH, EFIS_HEIGHT,
-			    xp11_atmo.pixels);
-			lacf_free(path);
-#endif
 		}
 	} else if (xp11_atmo.last_update + UPD_INTVAL <= now) {
-		glBindBuffer(GL_PIXEL_PACK_BUFFER, xp11_atmo.pbo);
-		glReadPixels(xp11_atmo.efis_x, xp11_atmo.efis_y,
-		    EFIS_WIDTH, EFIS_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+		transfer_new_efis_frame();
 		xp11_atmo.xfer_sync =
 		    glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		xp11_atmo.last_update = now;
 	}
-
-	update_efis();
 
 out:
 	mutex_exit(&xp11_atmo.lock);
@@ -343,14 +550,14 @@ out:
 }
 
 atmo_t *
-atmo_xp11_init(void)
+atmo_xp11_init(const char *xpdir, const char *plugindir)
 {
+	char *path;
+
 	ASSERT(!inited);
 	inited = B_TRUE;
 
 	memset(&xp11_atmo, 0, sizeof (xp11_atmo));
-
-	mutex_init(&xp11_atmo.lock);
 
 	for (int i = 0; i < 3; i++) {
 		fdr_find(&drs.cloud_type[i],
@@ -393,6 +600,24 @@ atmo_xp11_init(void)
 
 	fdr_find(&drs.render_type, "sim/graphics/view/panel_render_type");
 
+	fdr_find(&drs.temp_sl, "sim/weather/temperature_sealevel_c");
+	fdr_find(&drs.temp_tropo, "sim/weather/temperature_tropo_c");
+	fdr_find(&drs.alt_tropo, "sim/weather/tropo_alt_mtr");
+
+	for (int i = 0; i < 4; i++)
+		xp11_atmo.precip_nodes[i] = VECT2(i, 0);
+	xp11_atmo.precip_nodes[4] = NULL_VECT2;
+
+	path = mkpathname(xpdir, plugindir, "data", "cleanup.glsl", NULL);
+	xp11_atmo.cleanup_prog = shader_prog_from_file("cleanup", NULL, path);
+	lacf_free(path);
+
+	path = mkpathname(xpdir, plugindir, "data", "smooth.glsl", NULL);
+	xp11_atmo.smooth_prog = shader_prog_from_file("smooth", NULL, path);
+	lacf_free(path);
+
+	mutex_init(&xp11_atmo.lock);
+
 	XPLMRegisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);
 
 	return (&atmo);
@@ -407,6 +632,14 @@ atmo_xp11_fini(void)
 
 	if (xp11_atmo.pbo != 0)
 		glDeleteBuffers(1, &xp11_atmo.pbo);
+	if (xp11_atmo.tmp_fbo[0] != 0)
+		glDeleteFramebuffers(3, xp11_atmo.tmp_fbo);
+	if (xp11_atmo.tmp_tex[0] != 0)
+		glDeleteTextures(3, xp11_atmo.tmp_tex);
+	if (xp11_atmo.cleanup_prog != 0)
+		glDeleteProgram(xp11_atmo.cleanup_prog);
+	if (xp11_atmo.smooth_prog != 0)
+		glDeleteProgram(xp11_atmo.smooth_prog);
 
 	mutex_destroy(&xp11_atmo.lock);
 	XPLMUnregisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);

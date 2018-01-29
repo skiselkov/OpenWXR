@@ -33,7 +33,7 @@
 
 #define	TEX_UPD_INTVAL	40000		/* us, 25 fps */
 #define	WORKER_INTVAL	33333		/* us, 30 fps */
-#define	MAX_BEAM_ENERGY	100		/* dBmW */
+#define	MAX_BEAM_ENERGY	1		/* dBmW */
 
 struct wxr_s {
 	const wxr_conf_t	*conf;
@@ -45,6 +45,7 @@ struct wxr_s {
 	GLuint			pbo;
 	GLsync			upload_sync;
 	uint64_t		last_upload;
+	GLuint			wxr_prog;
 
 	vect2_t			draw_pos;
 	vect2_t			draw_size;
@@ -70,7 +71,7 @@ struct wxr_s {
 	scan_line_t		sl;
 
 	/* unstructured, always safe to read & write */
-	uint8_t			*samples;
+	uint32_t		*samples;
 
 	worker_t		wk;
 };
@@ -85,8 +86,9 @@ wxr_worker(void *userinfo)
 
 	wxr->sl.origin = wxr->acf_pos;
 	wxr->sl.shape = wxr->conf->beam_shape;
-	wxr->sl.energy = MAX_BEAM_ENERGY * wxr->gain;
 	wxr->sl.range = wxr->conf->ranges[wxr->cur_range];
+	wxr->sl.energy = MAX_BEAM_ENERGY * wxr->gain;
+	wxr->sl.max_range = wxr->conf->ranges[wxr->conf->num_ranges - 1];
 	wxr->sl.num_samples = wxr->conf->res_y;
 	ant_pitch = wxr->ant_pitch_req;
 	acf_hdg = wxr->acf_orient.y;
@@ -98,6 +100,7 @@ wxr_worker(void *userinfo)
 	    wxr->conf->scan_time)); i++) {
 		double ant_hdg;
 		int off;
+		double energy_spent = 0;
 
 		/* Move the antenna by one notch left/right */
 		if (wxr->scan_right) {
@@ -126,8 +129,24 @@ wxr_worker(void *userinfo)
 		 * draw a partially updated scan line - no big deal.
 		 */
 		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
-			wxr->samples[off + j] = (wxr->sl.energy_out[j] /
-			    MAX_BEAM_ENERGY) * UINT8_MAX;
+			double energy = wxr->sl.energy_out[j];
+			double sample_sz = wxr->sl.range / wxr->sl.num_samples;
+			double sample_sz_rat = sample_sz / 1000.0;
+			double abs_energy = energy / sample_sz_rat;
+
+			energy_spent += energy;
+			if (energy_spent > 0.85)
+				wxr->samples[off + j] = 0xff808080u;
+			else if (abs_energy >= 0.02 * 0.6)
+				wxr->samples[off + j] = 0xffa564d8u;
+			else if (abs_energy >= 0.03 / 2 * 0.6)
+				wxr->samples[off + j] = 0xff2420edu;
+			else if (abs_energy >= 0.03 / 3 * 0.6)
+				wxr->samples[off + j] = 0xff00f2ffu;
+			else if (abs_energy >= 0.03 / 4 * 0.6)
+				wxr->samples[off + j] = 0xff55c278u;
+			else
+				wxr->samples[off + j] = 0xff000000u;
 		}
 	}
 
@@ -156,7 +175,8 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	 * 4 vertices per quad, 2 coords per vertex
 	 */
 	wxr->draw_num_coords = 4 * 2 * ceil(conf->scan_angle);
-	wxr->samples = calloc(conf->res_x * conf->res_y, 1);
+	wxr->samples = calloc(conf->res_x * conf->res_y,
+	    sizeof (*wxr->samples));
 	wxr->ant_pos = conf->res_x / 2;
 	wxr->azi_lim_right = conf->res_x - 1;
 	wxr->sl.energy_out = calloc(wxr->conf->res_y, sizeof (double));
@@ -219,16 +239,20 @@ wxr_get_scale(const wxr_t *wxr)
 	return (wxr->cur_range);
 }
 
+/*
+ * `left' and `right' are in degrees from 0 (straight head).
+ */
 void
-wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right)
+wxr_set_azimuth_limits(wxr_t *wxr, double left, double right)
 {
-	ASSERT3U(left, <, wxr->conf->res_x);
-	ASSERT3U(right, <, wxr->conf->res_x);
-	ASSERT3U(left, <, right);
+	ASSERT3F(left, >=, -wxr->conf->scan_angle / 2);
+	ASSERT3F(right, <=, wxr->conf->scan_angle / 2);
 
 	mutex_enter(&wxr->lock);
-	wxr->azi_lim_left = left;
-	wxr->azi_lim_right = right;
+	wxr->azi_lim_left = MAX(((left + wxr->conf->scan_angle / 2) /
+	    wxr->conf->scan_angle) * wxr->conf->res_x, 0);
+	wxr->azi_lim_right = MIN(((right + wxr->conf->scan_angle / 2) /
+	    wxr->conf->scan_angle) * wxr->conf->res_x, wxr->conf->res_x - 1);
 	mutex_exit(&wxr->lock);
 }
 
@@ -240,7 +264,7 @@ wxr_get_ant_azimuth(const wxr_t *wxr)
 }
 
 void
-wxr_set_pitch(wxr_t *wxr, double angle)
+wxr_set_ant_pitch(wxr_t *wxr, double angle)
 {
 	ASSERT3F(angle, <=, 90);
 	ASSERT3F(angle, >=, -90);
@@ -320,8 +344,8 @@ wxr_get_cur_tex(wxr_t *wxr)
 			XPLMBindTexture2d(wxr->tex[wxr->cur_tex],
 			    GL_TEXTURE_2D);
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, wxr->pbo);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
-			    wxr->conf->res_x, wxr->conf->res_y, 0, GL_RED,
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+			    wxr->conf->res_x, wxr->conf->res_y, 0, GL_RGBA,
 			    GL_UNSIGNED_BYTE, NULL);
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		}
@@ -333,7 +357,8 @@ wxr_get_cur_tex(wxr_t *wxr)
 		 * not slipping frame timing.
 		 */
 		void *ptr;
-		size_t sz = wxr->conf->res_x * wxr->conf->res_y;
+		size_t sz = wxr->conf->res_x * wxr->conf->res_y *
+		    sizeof (*wxr->samples);
 
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, wxr->pbo);
 		glBufferData(GL_PIXEL_UNPACK_BUFFER, sz, 0, GL_STREAM_DRAW);
@@ -378,9 +403,9 @@ wxr_bind_tex(wxr_t *wxr)
 			    GL_LINEAR);
 		}
 		XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
 		    wxr->conf->res_x, wxr->conf->res_y, 0,
-		    GL_RED, GL_UNSIGNED_BYTE, wxr->samples);
+		    GL_RGBA, GL_UNSIGNED_BYTE, wxr->samples);
 	}
 }
 

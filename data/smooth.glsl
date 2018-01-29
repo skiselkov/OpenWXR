@@ -16,22 +16,24 @@
  * Copyright 2018 Saso Kiselkov. All rights reserved.
  */
 
-#ifndef	_ATMO_XP11_H_
-#define	_ATMO_XP11_H_
+#version 120
 
-#include "atmo.h"
+uniform sampler2D	tex;
+uniform vec2		tex_sz;
+uniform float		smooth;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+void
+main(void)
+{
+	vec2 pos = gl_FragCoord.xy / tex_sz;
+	vec4 intens;
 
-atmo_t *atmo_xp11_init(const char *xpdir, const char *plugindir);
-void atmo_xp11_fini(void);
+	for (int i = -2; i <= 2; i += 1) {
+		for (int j = -2; j <= 2; j += 1) {
+			intens += texture2D(tex, vec2(pos.x + i * smooth,
+			    pos.y + j * smooth));
+		}
+	}
 
-void atmo_xp11_set_efis_pos(unsigned x, unsigned y, unsigned w, unsigned h);
-
-#ifdef __cplusplus
+	gl_FragColor = intens / 25.0;
 }
-#endif
-
-#endif	/* _ATMO_H_ */

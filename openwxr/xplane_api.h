@@ -37,9 +37,9 @@ typedef struct {
 	void (*set_acf_pos)(wxr_t *wxr, geo_pos3_t pos, vect3_t orient);
 	void (*set_scale)(wxr_t *wxr, unsigned range_idx);
 	unsigned (*get_scale)(const wxr_t *wxr);
-	void (*set_azimuth_limits)(wxr_t *wxr, unsigned left, unsigned right);
+	void (*set_azimuth_limits)(wxr_t *wxr, double left, double right);
 	double (*get_ant_azimuth)(const wxr_t *wxr);
-	void (*set_pitch)(wxr_t *wxr, double angle);
+	void (*set_ant_pitch)(wxr_t *wxr, double angle);
 	double (*get_ant_pitch)(const wxr_t *wxr);
 	void (*set_gain)(wxr_t *wxr, double gain);
 	double (*get_gain)(const wxr_t *wxr);

@@ -39,10 +39,10 @@ void wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size);
 void wxr_set_scale(wxr_t *wxr, unsigned range_idx);
 unsigned wxr_get_scale(const wxr_t *wxr);
 
-void wxr_set_azimuth_limits(wxr_t *wxr, unsigned left, unsigned right);
+void wxr_set_azimuth_limits(wxr_t *wxr, double left, double right);
 double wxr_get_ant_azimuth(const wxr_t *wxr);
 
-void wxr_set_pitch(wxr_t *wxr, double angle);
+void wxr_set_ant_pitch(wxr_t *wxr, double angle);
 double wxr_get_ant_pitch(const wxr_t *wxr);
 
 void wxr_set_gain(wxr_t *wxr, double gain);

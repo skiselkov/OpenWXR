@@ -60,7 +60,7 @@ static openwxr_intf_t openwxr_intf = {
 	.get_scale = wxr_get_scale,
 	.set_azimuth_limits = wxr_set_azimuth_limits,
 	.get_ant_azimuth = wxr_get_ant_azimuth,
-	.set_pitch = wxr_set_pitch,
+	.set_ant_pitch = wxr_set_ant_pitch,
 	.get_ant_pitch = wxr_get_ant_pitch,
 	.set_gain = wxr_set_gain,
 	.get_gain = wxr_get_gain,
@@ -164,7 +164,9 @@ XPluginStart(char *name, char *sig, char *desc)
 	 * Must go ahead of XPluginEnable to always have an atmosphere
 	 * ready for when external avionics start creating wxr_t instances.
 	 */
-	atmo = atmo_xp11_init();
+	atmo = atmo_xp11_init(xpdir, plugindir);
+	if (atmo == NULL)
+		return (0);
 
 	return (1);
 }

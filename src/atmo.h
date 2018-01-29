@@ -32,6 +32,7 @@ typedef struct {
 	vect2_t		shape;		/* X-horiz degrees, Y-vert degrees */
 	double		energy;		/* beam energy (no units), log scale */
 	double		range;		/* scan line sampling range */
+	double		max_range;	/* for calibrating energy depletion */
 	int		num_samples;	/* number of samples to return */
 	double		*energy_out;	/* energy return samples, log scale */
 	double		*doppler_out;	/* freq shift, relative motion, m/s */
