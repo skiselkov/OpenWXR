@@ -171,11 +171,19 @@ atmo_xp11_probe(scan_line_t *sl)
 {
 #define	COST_PER_1KM	0.025
 	double range;
+	double dir_rand1 = (sin(DEG2RAD(sl->dir.x) * 6.7768) *
+	    sin(DEG2RAD(sl->dir.x) * 18.06) *
+	    sin(DEG2RAD(sl->dir.x) * 31.415)) / 15.0;
+	double dir_rand2 = (sin(DEG2RAD(sl->dir.x) * 3.1767) *
+	    sin(DEG2RAD(sl->dir.x) * 14.459) *
+	    sin(DEG2RAD(sl->dir.x) * 34.252)) / 15.0;
 	double sin_rhdg = sin(DEG2RAD(sl->ant_rhdg));
 	double cos_rhdg = cos(DEG2RAD(sl->ant_rhdg));
 	double sin_pitch = sin(DEG2RAD(sl->dir.y));
-	double sin_pitch_up = sin(DEG2RAD(sl->dir.y + sl->shape.y / 2));
-	double sin_pitch_dn = sin(DEG2RAD(sl->dir.y - sl->shape.y / 2));
+	double sin_pitch_up = sin(DEG2RAD(sl->dir.y + sl->shape.y *
+	    (0.5 + dir_rand1)));
+	double sin_pitch_dn = sin(DEG2RAD(sl->dir.y - sl->shape.y *
+	    (0.5 + dir_rand2)));
 	vect2_t precip_nodes[5];
 	double energy = sl->energy;
 	double sample_sz = sl->range / sl->num_samples;

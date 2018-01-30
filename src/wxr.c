@@ -91,7 +91,7 @@ wxr_worker(void *userinfo)
 	wxr->sl.origin = wxr->acf_pos;
 	wxr->sl.shape = wxr->conf->beam_shape;
 	wxr->sl.range = wxr->conf->ranges[wxr->cur_range];
-	wxr->sl.energy = MAX_BEAM_ENERGY * wxr->gain;
+	wxr->sl.energy = MAX_BEAM_ENERGY;
 	wxr->sl.max_range = wxr->conf->ranges[wxr->conf->num_ranges - 1];
 	wxr->sl.num_samples = wxr->conf->res_y;
 	ant_pitch = wxr->ant_pitch_req;
@@ -139,15 +139,15 @@ wxr_worker(void *userinfo)
 			double abs_energy = energy / sample_sz_rat;
 
 			energy_spent += energy;
-			if (energy_spent > 0.82 && wxr->beam_shadow) {
+			if (energy_spent > 0.8 && wxr->beam_shadow) {
 				wxr->samples[off + j] = 0xff505050u;
-			} else if (abs_energy >= 0.02 * 0.6)
+			} else if (wxr->gain * abs_energy >= 0.02 * 0.6)
 				wxr->samples[off + j] = 0xffa564d8u;
-			else if (abs_energy >= 0.03 / 2 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.03 / 2 * 0.6)
 				wxr->samples[off + j] = 0xff2420edu;
-			else if (abs_energy >= 0.03 / 3 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.03 / 3 * 0.6)
 				wxr->samples[off + j] = 0xff00f2ffu;
-			else if (abs_energy >= 0.03 / 4 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.03 / 4 * 0.6)
 				wxr->samples[off + j] = 0xff55c278u;
 			else
 				wxr->samples[off + j] = 0xff000000u;
@@ -303,7 +303,6 @@ void
 wxr_set_gain(wxr_t *wxr, double gain)
 {
 	ASSERT3F(gain, >=, 0.0);
-	ASSERT3F(gain, <=, 1.0);
 
 	mutex_enter(&wxr->lock);
 	wxr->gain = gain;
