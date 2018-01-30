@@ -25,11 +25,13 @@
 
 #include <acfutils/assert.h>
 #include <acfutils/helpers.h>
+#include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
 #include <acfutils/worker.h>
 
 #include "wxr.h"
+#include "xplane.h"
 
 #define	TEX_UPD_INTVAL	40000		/* us, 25 fps */
 #define	WORKER_INTVAL	33333		/* us, 30 fps */
@@ -55,6 +57,7 @@ struct wxr_s {
 
 	mutex_t			lock;
 	/* protected by lock above */
+	bool_t			standby;
 	geo_pos3_t		acf_pos;
 	vect3_t			acf_orient;
 	unsigned		cur_range;
@@ -72,6 +75,7 @@ struct wxr_s {
 
 	/* unstructured, always safe to read & write */
 	uint32_t		*samples;
+	bool_t			beam_shadow;
 
 	worker_t		wk;
 };
@@ -135,9 +139,9 @@ wxr_worker(void *userinfo)
 			double abs_energy = energy / sample_sz_rat;
 
 			energy_spent += energy;
-			if (energy_spent > 0.85)
-				wxr->samples[off + j] = 0xff808080u;
-			else if (abs_energy >= 0.02 * 0.6)
+			if (energy_spent > 0.82 && wxr->beam_shadow) {
+				wxr->samples[off + j] = 0xff505050u;
+			} else if (abs_energy >= 0.02 * 0.6)
 				wxr->samples[off + j] = 0xffa564d8u;
 			else if (abs_energy >= 0.03 / 2 * 0.6)
 				wxr->samples[off + j] = 0xff2420edu;
@@ -156,6 +160,7 @@ wxr_worker(void *userinfo)
 wxr_t *
 wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 {
+	char *vtx, *frag;
 	wxr_t *wxr = calloc(1, sizeof (*wxr));
 
 	ASSERT(conf->num_ranges != 0);
@@ -182,6 +187,15 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->sl.energy_out = calloc(wxr->conf->res_y, sizeof (double));
 	wxr->sl.doppler_out = calloc(wxr->conf->res_y, sizeof (double));
 	wxr->atmo->set_range(wxr->conf->ranges[0]);
+
+	vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
+	    "smear_vtx.glsl", NULL);
+	frag = mkpathname(get_xpdir(), get_plugindir(), "data",
+	    "smear_frag.glsl", NULL);
+	wxr->wxr_prog = shader_prog_from_file("smear", vtx, frag);
+	lacf_free(vtx);
+	lacf_free(frag);
+
 	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
 
 	return (wxr);
@@ -201,7 +215,11 @@ wxr_fini(wxr_t *wxr)
 	free(wxr->samples);
 	free(wxr->sl.energy_out);
 	free(wxr->sl.doppler_out);
-	worker_fini(&wxr->wk);
+	if (!wxr->standby)
+		worker_fini(&wxr->wk);
+
+	if (wxr->wxr_prog != 0)
+		glDeleteProgram(wxr->wxr_prog);
 
 	free(wxr);
 }
@@ -389,6 +407,7 @@ wxr_bind_tex(wxr_t *wxr)
 	if (wxr->tex[0] != 0) {
 		GLuint tex = wxr_get_cur_tex(wxr);
 		ASSERT(tex != 0);
+		glActiveTexture(GL_TEXTURE0);
 		XPLMBindTexture2d(tex, GL_TEXTURE_2D);
 	} else {
 		/* initial texture upload, do a sync upload */
@@ -402,6 +421,7 @@ wxr_bind_tex(wxr_t *wxr)
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
 			    GL_LINEAR);
 		}
+		glActiveTexture(GL_TEXTURE0);
 		XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
 		    wxr->conf->res_x, wxr->conf->res_y, 0,
@@ -476,17 +496,29 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 	glEnableClientState(GL_VERTEX_ARRAY);
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 
+	glUseProgram(wxr->wxr_prog);
+	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
+	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
+	    wxr->conf->res_x, wxr->conf->res_y);
+
 	glVertexPointer(2, GL_FLOAT, 0, wxr->draw_vtx_coords);
 	glTexCoordPointer(2, GL_FLOAT, 0, wxr->draw_tex_coords);
 	glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords / 2);
+
+	glUseProgram(0);
 
 	glDisableClientState(GL_VERTEX_ARRAY);
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
 static void
-wxr_draw_square(vect2_t pos, vect2_t size)
+wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
+	glUseProgram(wxr->wxr_prog);
+	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
+	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
+	    wxr->conf->res_x, wxr->conf->res_y);
+
 	glBegin(GL_QUADS);
 	glTexCoord2f(0, 0);
 	glVertex2f(pos.x, pos.y);
@@ -497,6 +529,8 @@ wxr_draw_square(vect2_t pos, vect2_t size)
 	glTexCoord2f(0, 1);
 	glVertex2f(pos.x + size.x, pos.y);
 	glEnd();
+
+	glUseProgram(0);
 }
 
 void
@@ -509,6 +543,49 @@ wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size)
 		wxr_draw_arc(wxr, pos, size);
 	} else {
 		ASSERT3U(wxr->conf->disp_type, ==, WXR_DISP_SQUARE);
-		wxr_draw_square(pos, size);
+		wxr_draw_square(wxr, pos, size);
 	}
+}
+
+void
+wxr_set_beam_shadow(wxr_t *wxr, bool_t flag)
+{
+	wxr->beam_shadow = flag;
+}
+
+bool_t
+wxr_get_beam_shadow(const wxr_t *wxr)
+{
+	return (wxr->beam_shadow);
+}
+
+void
+wxr_set_standby(wxr_t *wxr, bool_t flag)
+{
+	if (wxr->standby != flag) {
+		wxr->standby = flag;
+		if (flag) {
+			worker_fini(&wxr->wk);
+			wxr->ant_pos = wxr->conf->res_x / 2;
+			memset(wxr->samples, 0, sizeof (*wxr->samples) *
+			    wxr->conf->res_x * wxr->conf->res_y);
+		} else {
+			worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
+		}
+	}
+}
+
+bool_t
+wxr_get_standby(const wxr_t *wxr)
+{
+	return (wxr->standby);
+}
+
+void
+wxr_clear_screen(wxr_t *wxr)
+{
+	mutex_enter(&wxr->lock);
+	memset(wxr->samples, 0, sizeof (*wxr->samples) * wxr->conf->res_x *
+	    wxr->conf->res_y);
+	mutex_exit(&wxr->lock);
 }

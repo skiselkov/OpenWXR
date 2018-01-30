@@ -66,6 +66,11 @@ static openwxr_intf_t openwxr_intf = {
 	.get_gain = wxr_get_gain,
 	.set_stab = wxr_set_stab,
 	.get_stab = wxr_get_stab,
+	.set_beam_shadow = wxr_set_beam_shadow,
+	.get_beam_shadow = wxr_get_beam_shadow,
+	.set_standby = wxr_set_standby,
+	.get_standby = wxr_get_standby,
+	.clear_screen = wxr_clear_screen,
 	.draw = wxr_draw
 };
 

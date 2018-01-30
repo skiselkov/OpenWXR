@@ -38,7 +38,7 @@
 #include "atmo_xp11.h"
 #include "xplane.h"
 
-#define	UPD_INTVAL	1000000		/* us */
+#define	UPD_INTVAL	100000		/* us */
 
 #define	EFIS_WIDTH	194
 #define	EFIS_LAT_PIX	(EFIS_WIDTH / 2)
@@ -90,6 +90,7 @@ static struct {
 	/* protected by lock */
 	uint32_t	*pixels;
 	double		range;
+	unsigned	range_i;
 	vect2_t		precip_nodes[5];
 
 	/* only accessed by foreground drawing thread */
@@ -152,7 +153,16 @@ static void
 atmo_xp11_set_range(double range)
 {
 	mutex_enter(&xp11_atmo.lock);
-	xp11_atmo.range = range;
+	/* Set the fallback value first */
+	xp11_atmo.range = efis_map_ranges[EFIS_MAP_NUM_RANGES - 1];
+	xp11_atmo.range_i = EFIS_MAP_NUM_RANGES - 1;
+	for (int i = 0; i < EFIS_MAP_NUM_RANGES; i++) {
+		if (range <= efis_map_ranges[i]) {
+			xp11_atmo.range = efis_map_ranges[i];
+			xp11_atmo.range_i = i;
+			break;
+		}
+	}
 	mutex_exit(&xp11_atmo.lock);
 }
 
@@ -171,16 +181,6 @@ atmo_xp11_probe(scan_line_t *sl)
 	double sample_sz = sl->range / sl->num_samples;
 	double sample_sz_rat = sample_sz / 1000.0;
 	double cost_per_sample = COST_PER_1KM * sample_sz_rat;
-
-#if 0
-	static time_t last = 0;
-	bool_t report = B_FALSE;
-
-	if (time(NULL) > last) {
-		report = B_TRUE;
-		last = time(NULL);
-	}
-#endif
 
 	mutex_enter(&xp11_atmo.lock);
 	range = xp11_atmo.range;
@@ -248,26 +248,9 @@ atmo_xp11_probe(scan_line_t *sl)
 		energy_cost = MAX(energy_cost, cost_per_sample *
 		    precip_intens_dn * (energy / sl->energy));
 
-#if 0
-		if (report && i < 20) {
-			printf("i: %.4f  cost: %f\n",
-			    precip_intens_mid, energy_cost);
-		}
-#endif
-
 		sl->energy_out[i] = energy_cost;
 		energy = MAX(0, energy - energy_cost);
 	}
-}
-
-static efis_map_range_t
-efis_map_range_select(void)
-{
-	for (int i = 0; i < EFIS_MAP_NUM_RANGES; i++) {
-		if (xp11_atmo.range <= efis_map_ranges[i])
-			return (i);
-	}
-	return (EFIS_MAP_RANGE_640NM);
 }
 
 static void
@@ -285,8 +268,8 @@ update_efis(void)
 		dr_seti(&drs.EFIS.mode, EFIS_MODE_NORM);
 	if (dr_geti(&drs.EFIS.submode) != EFIS_SUBMODE_GOOD_MAP)
 		dr_seti(&drs.EFIS.submode, EFIS_SUBMODE_GOOD_MAP);
-	if (dr_geti(&drs.EFIS.range) != (int)efis_map_range_select())
-		dr_seti(&drs.EFIS.range, efis_map_range_select());
+	if (dr_geti(&drs.EFIS.range) != (int)xp11_atmo.range_i)
+		dr_seti(&drs.EFIS.range, xp11_atmo.range_i);
 	if (dr_geti(&drs.EFIS.shows_wx) != 1)
 		dr_seti(&drs.EFIS.shows_wx, 1);
 	if (dr_getf(&drs.EFIS.wx_alpha) != 1.0)

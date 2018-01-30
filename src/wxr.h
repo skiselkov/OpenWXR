@@ -51,6 +51,14 @@ double wxr_get_gain(const wxr_t *wxr);
 void wxr_set_stab(wxr_t *wxr, double pitch, double roll);
 void wxr_get_stab(const wxr_t *wxr, bool_t *pitch, bool_t *roll);
 
+void wxr_set_beam_shadow(wxr_t *wxr, bool_t flag);
+bool_t wxr_get_beam_shadow(const wxr_t *wxr);
+
+void wxr_set_standby(wxr_t *wxr, bool_t flag);
+bool_t wxr_get_standby(const wxr_t *wxr);
+
+void wxr_clear_screen(wxr_t *wxr);
+
 #ifdef __cplusplus
 }
 #endif

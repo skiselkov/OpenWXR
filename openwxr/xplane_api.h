@@ -45,7 +45,12 @@ typedef struct {
 	double (*get_gain)(const wxr_t *wxr);
 	void (*set_stab)(wxr_t *wxr, double angle, double roll);
 	void (*get_stab)(const wxr_t *wxr, bool_t *pitch, bool_t *roll);
+	void (*set_beam_shadow)(wxr_t *wxr, bool_t flag);
+	bool_t (*get_beam_shadow)(const wxr_t *wxr);
+	void (*set_standby)(wxr_t *wxr, bool_t flag);
+	bool_t (*get_standby)(const wxr_t *wxr);
 	void (*draw)(wxr_t *wxr, vect2_t pos, vect2_t size);
+	void (*clear_screen)(wxr_t *wxr);
 } openwxr_intf_t;
 
 typedef enum {
