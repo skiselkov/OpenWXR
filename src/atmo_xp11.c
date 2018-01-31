@@ -135,6 +135,7 @@ static struct {
 	dr_t	alt_tropo;
 
 	struct {
+		dr_t	instr_brt;
 		dr_t	mode;
 		dr_t	submode;
 		dr_t	range;
@@ -306,7 +307,13 @@ update_efis(void)
 	    EFIS_SUBMODE_PLANE = 4,
 	    EFIS_SUBMODE_GOOD_MAP = 5
 	};
-
+	/*
+	 * IMPORTANT: the EFIS map brightness is tied to
+	 * instrument_brightness_ratio[0], so make sure it's full intensity
+	 * all the time so we can read the map.
+	 */
+	if (dr_getf(&drs.EFIS.instr_brt) != 1.0)
+		dr_setf(&drs.EFIS.instr_brt, 1.0);
 	if (dr_geti(&drs.EFIS.mode) != EFIS_MODE_NORM)
 		dr_seti(&drs.EFIS.mode, EFIS_MODE_NORM);
 	if (dr_geti(&drs.EFIS.submode) != EFIS_SUBMODE_GOOD_MAP)
@@ -609,6 +616,8 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 	}
 	fdr_find(&drs.turb, "sim/weather/wind_turbulence_percent");
 
+	fdr_find(&drs.EFIS.instr_brt,
+	    "sim/cockpit2/switches/instrument_brightness_ratio");
 	fdr_find(&drs.EFIS.mode, "sim/cockpit2/EFIS/map_mode");
 	fdr_find(&drs.EFIS.submode, "sim/cockpit/switches/EFIS_map_submode");
 	fdr_find(&drs.EFIS.range,
