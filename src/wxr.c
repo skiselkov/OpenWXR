@@ -202,6 +202,8 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	ASSERT3F(conf->scan_angle_vert, >, 0);
 	ASSERT(atmo->probe != NULL);
 
+	mutex_init(&wxr->lock);
+
 	wxr->conf = conf;
 	wxr->atmo = atmo;
 	wxr->gain = 1.0;
@@ -250,6 +252,8 @@ wxr_fini(wxr_t *wxr)
 
 	if (wxr->wxr_prog != 0)
 		glDeleteProgram(wxr->wxr_prog);
+
+	mutex_destroy(&wxr->lock);
 
 	free(wxr);
 }
