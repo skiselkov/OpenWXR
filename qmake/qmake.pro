@@ -115,7 +115,7 @@ linux-g++-64 {
 	QMAKE_CFLAGS += $$system("$$[LIBACFUTILS]/pkg-config-deps linux-64 \
 	    --cflags")
 
-	LIBS += -L$$[LIBACFUTILS]/qmake/lin64/libacfutils.a
+	LIBS += -L$$[LIBACFUTILS]/qmake/lin64 -lacfutils
 	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps linux-64 --libs")
 }
 
@@ -128,7 +128,7 @@ linux-g++-32 {
 	QMAKE_CFLAGS += -fno-stack-protector
 	LIBS += -fno-stack-protector
 
-	LIBS += $$[LIBACFUTILS]/qmake/lin32/libacfutils.a
+	LIBS += -L$$[LIBACFUTILS]/qmake/lin32 -lacfutils
 	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps linux-32 --libs")
 
 	LIBS += -lssp_nonshared
