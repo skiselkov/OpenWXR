@@ -25,6 +25,7 @@
 
 #include <acfutils/assert.h>
 #include <acfutils/helpers.h>
+#include <acfutils/math.h>
 #include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
@@ -51,13 +52,16 @@ struct wxr_s {
 
 	vect2_t			draw_pos;
 	vect2_t			draw_size;
+	bool_t			draw_vert;
 	size_t			draw_num_coords;
+	size_t			draw_num_coords_vert;
 	GLfloat			*draw_vtx_coords;
 	GLfloat			*draw_tex_coords;
 
 	mutex_t			lock;
 	/* protected by lock above */
 	bool_t			standby;
+	bool_t			vert_mode;
 	geo_pos3_t		acf_pos;
 	vect3_t			acf_orient;
 	unsigned		cur_range;
@@ -70,6 +74,7 @@ struct wxr_s {
 
 	/* only accessed from worker thread */
 	unsigned		ant_pos;
+	unsigned		ant_pos_vert;
 	bool_t			scan_right;
 	scan_line_t		sl;
 
@@ -84,7 +89,7 @@ static bool_t
 wxr_worker(void *userinfo)
 {
 	wxr_t *wxr = userinfo;
-	double ant_pitch, acf_hdg;
+	double ant_pitch, acf_hdg, acf_pitch;
 
 	mutex_enter(&wxr->lock);
 
@@ -96,6 +101,7 @@ wxr_worker(void *userinfo)
 	wxr->sl.num_samples = wxr->conf->res_y;
 	ant_pitch = wxr->ant_pitch_req;
 	acf_hdg = wxr->acf_orient.y;
+	acf_pitch = wxr->acf_orient.x;
 
 	mutex_exit(&wxr->lock);
 
@@ -106,25 +112,47 @@ wxr_worker(void *userinfo)
 		int off;
 		double energy_spent = 0;
 
-		/* Move the antenna by one notch left/right */
+		/*
+		 * Move the antenna by one notch left/right (or up/down
+		 * when in vertical mode).
+		 */
 		if (wxr->scan_right) {
-			wxr->ant_pos++;
-			if (wxr->ant_pos == wxr->conf->res_x - 1 ||
-			    wxr->ant_pos == wxr->azi_lim_right)
+			if (!wxr->vert_mode)
+				wxr->ant_pos++;
+			else
+				wxr->ant_pos_vert++;
+			if ((!wxr->vert_mode &&
+			    (wxr->ant_pos == wxr->conf->res_x - 1 ||
+			    wxr->ant_pos == wxr->azi_lim_right)) ||
+			    (wxr->vert_mode &&
+			    wxr->ant_pos_vert == wxr->conf->res_x - 1))
 				wxr->scan_right = B_FALSE;
 		} else {
-			wxr->ant_pos--;
-			if (wxr->ant_pos == 0 ||
-			    wxr->ant_pos == wxr->azi_lim_left)
+			if (!wxr->vert_mode)
+				wxr->ant_pos--;
+			else
+				wxr->ant_pos_vert--;
+			if ((!wxr->vert_mode && (wxr->ant_pos == 0 ||
+			    wxr->ant_pos == wxr->azi_lim_left)) ||
+			    (wxr->vert_mode && wxr->ant_pos_vert == 0))
 				wxr->scan_right = B_TRUE;
 		}
-
-		off = wxr->ant_pos * wxr->conf->res_y;
+		if (!wxr->vert_mode)
+			off = wxr->ant_pos * wxr->conf->res_y;
+		else
+			off = wxr->ant_pos_vert * wxr->conf->res_y;
 
 		wxr->sl.ant_rhdg = (wxr->conf->scan_angle *
 		    ((wxr->ant_pos / (double)wxr->conf->res_x) - 0.5));
 		ant_hdg = acf_hdg + wxr->sl.ant_rhdg;
+		if (wxr->vert_mode) {
+			ant_pitch = acf_pitch + (wxr->conf->scan_angle_vert *
+			    ((wxr->ant_pos_vert / (double)wxr->conf->res_x) -
+			    0.5));
+			ant_pitch = clamp(ant_pitch, -90, 90);
+		}
 		wxr->sl.dir = VECT2(ant_hdg, ant_pitch);
+		wxr->sl.vert_scan = wxr->vert_mode;
 
 		wxr->atmo->probe(&wxr->sl);
 
@@ -171,6 +199,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	ASSERT3F(conf->beam_shape.y, >, 0);
 	ASSERT3F(conf->scan_time, >, 0);
 	ASSERT3F(conf->scan_angle, >, 0);
+	ASSERT3F(conf->scan_angle_vert, >, 0);
 	ASSERT(atmo->probe != NULL);
 
 	wxr->conf = conf;
@@ -180,6 +209,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	 * 4 vertices per quad, 2 coords per vertex
 	 */
 	wxr->draw_num_coords = 4 * 2 * ceil(conf->scan_angle);
+	wxr->draw_num_coords_vert = 4 * 2 * ceil(conf->scan_angle_vert);
 	wxr->samples = calloc(conf->res_x * conf->res_y,
 	    sizeof (*wxr->samples));
 	wxr->ant_pos = conf->res_x / 2;
@@ -296,7 +326,12 @@ double
 wxr_get_ant_pitch(const wxr_t *wxr)
 {
 	/* TODO: this is broken */
-	return (wxr->ant_pitch_req);
+	if (!wxr->vert_mode) {
+		return (wxr->ant_pitch_req);
+	} else {
+		return (-((wxr->ant_pos_vert / (double)wxr->conf->res_x) -
+		    0.5) * wxr->conf->scan_angle_vert);
+	}
 }
 
 void
@@ -429,8 +464,13 @@ wxr_bind_tex(wxr_t *wxr)
 }
 
 static void
-wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size)
+wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size, bool_t vert)
 {
+	double scan_angle = !vert ? wxr->conf->scan_angle :
+	    wxr->conf->scan_angle_vert;
+	unsigned num_coords = !vert ? wxr->draw_num_coords :
+	    wxr->draw_num_coords_vert;
+
 	if (wxr->draw_vtx_coords == NULL) {
 		wxr->draw_vtx_coords = calloc(wxr->draw_num_coords,
 		    sizeof (*wxr->draw_vtx_coords));
@@ -438,47 +478,81 @@ wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size)
 		    sizeof (*wxr->draw_tex_coords));
 	}
 
-	for (unsigned i = 0, j = 0; i < wxr->draw_num_coords; i += 4 * 2, j++) {
+	for (unsigned i = 0, j = 0; i < num_coords; i += 4 * 2, j++) {
 		/* Draw 1-degree increments */
-		double fract1 = (double)j / wxr->conf->scan_angle;
-		double fract2 = (double)(j + 1) / wxr->conf->scan_angle;
-		double angle1 = DEG2RAD((fract1 * wxr->conf->scan_angle) -
-		    (wxr->conf->scan_angle / 2));
-		double angle2 = DEG2RAD((fract1 * wxr->conf->scan_angle) -
-		    (wxr->conf->scan_angle / 2) + 1);
+		double fract1 = (double)j / scan_angle;
+		double fract2 = (double)(j + 1) / scan_angle;
+		double angle1 = DEG2RAD((fract1 * scan_angle) -
+		    (scan_angle / 2));
+		double angle2 = DEG2RAD((fract1 * scan_angle) -
+		    (scan_angle / 2) + 1);
 
 		/*
 		 * Draw the quad in clockwise vertex order.
 		 */
 
 		/* lower-left */
-		wxr->draw_vtx_coords[i] = pos.x + size.x / 2;
+		if (!vert)
+			wxr->draw_vtx_coords[i] = pos.x + size.x / 2;
+		else
+			wxr->draw_vtx_coords[i] = pos.x;
 		wxr->draw_tex_coords[i] = 0;
 
-		wxr->draw_vtx_coords[i + 1] = pos.y;
+		if (!vert)
+			wxr->draw_vtx_coords[i + 1] = pos.y;
+		else
+			wxr->draw_vtx_coords[i + 1] = pos.y + size.y / 2;
 		wxr->draw_tex_coords[i + 1] = fract1;
 
 		/* upper-left */
-		wxr->draw_vtx_coords[i + 2] = (pos.x + size.x / 2) +
-		    (sin(angle1) * (size.x / 2));
+		if (!vert) {
+			wxr->draw_vtx_coords[i + 2] = (pos.x + size.x / 2) +
+			    (sin(angle1) * (size.x / 2));
+		} else {
+			wxr->draw_vtx_coords[i + 2] =
+			    pos.x + (cos(angle1) * size.x);
+		}
 		wxr->draw_tex_coords[i + 2] = 1;
 
-		wxr->draw_vtx_coords[i + 3] = pos.y + (cos(angle1) * size.y);
+		if (!vert) {
+			wxr->draw_vtx_coords[i + 3] =
+			    pos.y + (cos(angle1) * size.y);
+		} else {
+			wxr->draw_vtx_coords[i + 3] = (pos.y + size.y / 2) -
+			    (sin(angle1) * (size.y / 2));
+		}
 		wxr->draw_tex_coords[i + 3] = fract1;
 
 		/* upper-right */
-		wxr->draw_vtx_coords[i + 4] = (pos.x + size.x / 2) +
-		    (sin(angle2) * (size.x / 2));
+		if (!vert) {
+			wxr->draw_vtx_coords[i + 4] = (pos.x + size.x / 2) +
+			    (sin(angle2) * (size.x / 2));
+		} else {
+			wxr->draw_vtx_coords[i + 4] =
+			    pos.x + (cos(angle2) * size.x);
+		}
 		wxr->draw_tex_coords[i + 4] = 1;
 
-		wxr->draw_vtx_coords[i + 5] = pos.y + (cos(angle2) * size.y);
+		if (!vert) {
+			wxr->draw_vtx_coords[i + 5] =
+			    pos.y + (cos(angle2) * size.y);
+		} else {
+			wxr->draw_vtx_coords[i + 5] = (pos.y + size.y / 2) -
+			    (sin(angle2) * (size.y / 2));
+		}
 		wxr->draw_tex_coords[i + 5] = fract2;
 
 		/* lower-right */
-		wxr->draw_vtx_coords[i + 6] = pos.x + size.x / 2;
+		if (!vert)
+			wxr->draw_vtx_coords[i + 6] = pos.x + size.x / 2;
+		else
+			wxr->draw_vtx_coords[i + 6] = pos.x;
 		wxr->draw_tex_coords[i + 6] = 0;
 
-		wxr->draw_vtx_coords[i + 7] = pos.y;
+		if (!vert)
+			wxr->draw_vtx_coords[i + 7] = pos.y;
+		else
+			wxr->draw_vtx_coords[i + 7] = pos.y + size.y / 2;
 		wxr->draw_tex_coords[i + 7] = fract2;
 	}
 }
@@ -486,10 +560,12 @@ wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size)
 static void
 wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
-	if (!VECT2_EQ(pos, wxr->draw_pos) || !VECT2_EQ(size, wxr->draw_size)) {
-		wxr_draw_arc_recache(wxr, pos, size);
+	if (!VECT2_EQ(pos, wxr->draw_pos) || !VECT2_EQ(size, wxr->draw_size) ||
+	    wxr->draw_vert != wxr->vert_mode) {
+		wxr_draw_arc_recache(wxr, pos, size, wxr->vert_mode);
 		wxr->draw_pos = pos;
 		wxr->draw_size = size;
+		wxr->draw_vert = wxr->vert_mode;
 	}
 
 	glEnableClientState(GL_VERTEX_ARRAY);
@@ -502,7 +578,10 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 
 	glVertexPointer(2, GL_FLOAT, 0, wxr->draw_vtx_coords);
 	glTexCoordPointer(2, GL_FLOAT, 0, wxr->draw_tex_coords);
-	glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords / 2);
+	if (!wxr->draw_vert)
+		glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords / 2);
+	else
+		glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords_vert / 2);
 
 	glUseProgram(0);
 
@@ -518,16 +597,29 @@ wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
 
-	glBegin(GL_QUADS);
-	glTexCoord2f(0, 0);
-	glVertex2f(pos.x, pos.y);
-	glTexCoord2f(1, 0);
-	glVertex2f(pos.x, pos.y + size.y);
-	glTexCoord2f(1, 1);
-	glVertex2f(pos.x + size.x, pos.y + size.y);
-	glTexCoord2f(0, 1);
-	glVertex2f(pos.x + size.x, pos.y);
-	glEnd();
+	if (!wxr->vert_mode) {
+		glBegin(GL_QUADS);
+		glTexCoord2f(0, 0);
+		glVertex2f(pos.x, pos.y);
+		glTexCoord2f(1, 0);
+		glVertex2f(pos.x, pos.y + size.y);
+		glTexCoord2f(1, 1);
+		glVertex2f(pos.x + size.x, pos.y + size.y);
+		glTexCoord2f(0, 1);
+		glVertex2f(pos.x + size.x, pos.y);
+		glEnd();
+	} else {
+		glBegin(GL_QUADS);
+		glTexCoord2f(0, 0);
+		glVertex2f(pos.x, pos.y + size.y);
+		glTexCoord2f(1, 0);
+		glVertex2f(pos.x + size.x, pos.y + size.y);
+		glTexCoord2f(1, 1);
+		glVertex2f(pos.x + size.x, pos.y);
+		glTexCoord2f(0, 1);
+		glVertex2f(pos.x, pos.y);
+		glEnd();
+	}
 
 	glUseProgram(0);
 }
@@ -563,6 +655,7 @@ wxr_set_standby(wxr_t *wxr, bool_t flag)
 {
 	if (wxr->standby != flag) {
 		wxr->standby = flag;
+		wxr->vert_mode = B_FALSE;
 		if (flag) {
 			worker_fini(&wxr->wk);
 			wxr->ant_pos = wxr->conf->res_x / 2;
@@ -589,4 +682,41 @@ wxr_clear_screen(wxr_t *wxr)
 	    wxr->conf->res_y);
 	mutex_exit(&wxr->lock);
 	mutex_exit(&wxr->wk.lock);
+}
+
+void
+wxr_set_vert_mode(wxr_t *wxr, bool_t flag, double azimuth)
+{
+	mutex_enter(&wxr->wk.lock);
+	mutex_enter(&wxr->lock);
+
+	ASSERT3F(ABS(azimuth), <=, wxr->conf->scan_angle / 2);
+
+	if (flag) {
+		wxr->ant_pos = clampi(((azimuth + wxr->conf->scan_angle / 2) /
+		    wxr->conf->scan_angle) * wxr->conf->res_x, 0,
+		    wxr->conf->res_x - 1);
+	}
+	if (flag && !wxr->vert_mode) {
+		wxr->vert_mode = B_TRUE;
+		wxr->ant_pos_vert = clampi(((wxr->ant_pitch_req +
+		    wxr->conf->scan_angle_vert / 2) /
+		    wxr->conf->scan_angle_vert) * wxr->conf->res_x, 0,
+		    wxr->conf->res_x - 1);
+		memset(wxr->samples, 0, sizeof (*wxr->samples) *
+		    wxr->conf->res_x * wxr->conf->res_y);
+	} else if (!flag && wxr->vert_mode) {
+		wxr->vert_mode = B_FALSE;
+		memset(wxr->samples, 0, sizeof (*wxr->samples) *
+		    wxr->conf->res_x * wxr->conf->res_y);
+	}
+
+	mutex_exit(&wxr->lock);
+	mutex_exit(&wxr->wk.lock);
+}
+
+bool_t
+wxr_get_vert_mode(const wxr_t *wxr)
+{
+	return (wxr->vert_mode);
 }

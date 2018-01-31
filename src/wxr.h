@@ -57,6 +57,9 @@ bool_t wxr_get_beam_shadow(const wxr_t *wxr);
 void wxr_set_standby(wxr_t *wxr, bool_t flag);
 bool_t wxr_get_standby(const wxr_t *wxr);
 
+void wxr_set_vert_mode(wxr_t *wxr, bool_t flag, double azimuth);
+bool_t wxr_get_vert_mode(const wxr_t *wxr);
+
 void wxr_clear_screen(wxr_t *wxr);
 
 #ifdef __cplusplus

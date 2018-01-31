@@ -63,25 +63,25 @@ enum {
 };
 
 typedef enum {
+	EFIS_MAP_RANGE_2_5NM,
+	EFIS_MAP_RANGE_5NM,
 	EFIS_MAP_RANGE_10NM,
 	EFIS_MAP_RANGE_20NM,
 	EFIS_MAP_RANGE_40NM,
 	EFIS_MAP_RANGE_80NM,
 	EFIS_MAP_RANGE_160NM,
-	EFIS_MAP_RANGE_320NM,
-	EFIS_MAP_RANGE_640NM,
 	EFIS_MAP_NUM_RANGES
 } efis_map_range_t;
 
 /* Must follow order of efis_map_range_t */
 static double efis_map_ranges[EFIS_MAP_NUM_RANGES] = {
+	NM2MET(2.5),
+	NM2MET(5),
 	NM2MET(10),
 	NM2MET(20),
 	NM2MET(40),
 	NM2MET(80),
-	NM2MET(160),
-	NM2MET(320),
-	NM2MET(640)
+	NM2MET(160)
 };
 
 static struct {
@@ -178,12 +178,20 @@ atmo_xp11_probe(scan_line_t *sl)
 	    sin(DEG2RAD(sl->dir.x) * 14.459) *
 	    sin(DEG2RAD(sl->dir.x) * 34.252)) / 15.0;
 	double sin_rhdg = sin(DEG2RAD(sl->ant_rhdg));
+	double sin_rhdg_left = sl->vert_scan ? sin(DEG2RAD(sl->ant_rhdg -
+	    sl->shape.x)) : 0;
+	double sin_rhdg_right = sl->vert_scan ? sin(DEG2RAD(sl->ant_rhdg +
+	    sl->shape.x)) : 0;
 	double cos_rhdg = cos(DEG2RAD(sl->ant_rhdg));
+	double cos_rhdg_left = sl->vert_scan ? cos(DEG2RAD(sl->ant_rhdg -
+	    sl->shape.x)) : 0;
+	double cos_rhdg_right = sl->vert_scan ? cos(DEG2RAD(sl->ant_rhdg +
+	    sl->shape.x)) : 0;
 	double sin_pitch = sin(DEG2RAD(sl->dir.y));
-	double sin_pitch_up = sin(DEG2RAD(sl->dir.y + sl->shape.y *
-	    (0.5 + dir_rand1)));
-	double sin_pitch_dn = sin(DEG2RAD(sl->dir.y - sl->shape.y *
-	    (0.5 + dir_rand2)));
+	double sin_pitch_up = !sl->vert_scan ? sin(DEG2RAD(sl->dir.y +
+	    sl->shape.y * (0.5 + dir_rand1))) : 0;
+	double sin_pitch_dn = !sl->vert_scan ? sin(DEG2RAD(sl->dir.y -
+	    sl->shape.y * (0.5 + dir_rand2))) : 0;
 	vect2_t precip_nodes[5];
 	double energy = sl->energy;
 	double sample_sz = sl->range / sl->num_samples;
@@ -198,14 +206,26 @@ atmo_xp11_probe(scan_line_t *sl)
 	for (int i = 0; i < sl->num_samples; i++) {
 		int x = (((double)i + 1) / sl->num_samples) *
 		    (sl->range / range) * EFIS_LON_FWD * sin_rhdg;
+		int x_left = sl->vert_scan ? (((double)i + 1) /
+		    sl->num_samples) * (sl->range / range) * EFIS_LON_FWD *
+		    sin_rhdg_left : 0;
+		int x_right = sl->vert_scan ? (((double)i + 1) /
+		    sl->num_samples) * (sl->range / range) * EFIS_LON_FWD *
+		    sin_rhdg_right : 0;
 		int y = (((double)i + 1) / sl->num_samples) *
 		    (sl->range / range) * EFIS_LON_FWD * cos_rhdg;
+		int y_left = sl->vert_scan ? (((double)i + 1) /
+		    sl->num_samples) * (sl->range / range) * EFIS_LON_FWD *
+		    cos_rhdg_left : 0;
+		int y_right = sl->vert_scan ? (((double)i + 1) /
+		    sl->num_samples) * (sl->range / range) * EFIS_LON_FWD *
+		    cos_rhdg_right : 0;
 		double d = (((double)i + 1) / sl->num_samples) * sl->range;
 		double z_up = sl->origin.elev + d * sin_pitch_up;
 		double z = sl->origin.elev + d * sin_pitch;
 		double z_dn = sl->origin.elev + d * sin_pitch_dn;
-		double precip_intens;
-		double precip_intens_up, precip_intens_mid, precip_intens_dn;
+		double precip_intens_pt;
+		double precip_intens[3];
 		double energy_cost = 0;
 
 		UNUSED(z);
@@ -224,37 +244,52 @@ atmo_xp11_probe(scan_line_t *sl)
 		}
 
 		if (xp11_atmo.pixels != NULL) {
-			precip_intens = (xp11_atmo.pixels[y * EFIS_WIDTH + x] &
-			    0xff) / 255.0;
+			precip_intens_pt = (xp11_atmo.pixels[y *
+			    EFIS_WIDTH + x] & 0xff) / 255.0;
+			if (sl->vert_scan) {
+				precip_intens_pt += (xp11_atmo.pixels[y_left *
+				    EFIS_WIDTH + x_left] & 0xff) / 255.0;
+				precip_intens_pt += (xp11_atmo.pixels[y_right *
+				    EFIS_WIDTH + x_right] & 0xff) / 255.0;
+				precip_intens_pt /= 3.0;
+			}
 		} else {
-			precip_intens = 0.0;
+			precip_intens_pt = 0.0;
 		}
 
 		/*
 		 * Compute precip intensity while taking the precip modulation
 		 * nodes into account.
 		 */
-		precip_intens_up = precip_intens *
-		    fx_lin_multi(z_up, precip_nodes, B_FALSE);
-		if (isnan(precip_intens_up))
-			precip_intens_up = 0;
+		if (!sl->vert_scan) {
+			precip_intens[0] = precip_intens_pt *
+			    fx_lin_multi(z_up, precip_nodes, B_FALSE);
+			if (isnan(precip_intens[0]))
+				precip_intens[0] = 0;
+		} else {
+			precip_intens[0] = 0;
+		}
 
-		precip_intens_mid = precip_intens *
+		precip_intens[1] = precip_intens_pt *
 		    fx_lin_multi(z, precip_nodes, B_FALSE);
-		if (isnan(precip_intens_mid))
-			precip_intens_mid = 0;
+		if (isnan(precip_intens[1]))
+			precip_intens[1] = 0;
 
-		precip_intens_dn = precip_intens *
-		    fx_lin_multi(z_dn, precip_nodes, B_FALSE);
-		if (isnan(precip_intens_dn))
-			precip_intens_dn = 0;
+		if (!sl->vert_scan) {
+			precip_intens[2] = precip_intens_pt *
+			    fx_lin_multi(z_dn, precip_nodes, B_FALSE);
+			if (isnan(precip_intens[2]))
+				precip_intens[2] = 0;
+		} else {
+			precip_intens[2] = 0;
+		}
 
 		energy_cost = MAX(energy_cost, cost_per_sample *
-		    precip_intens_up * (energy / sl->energy));
+		    precip_intens[0] * (energy / sl->energy));
 		energy_cost = MAX(energy_cost, cost_per_sample *
-		    precip_intens_mid * (energy / sl->energy));
+		    precip_intens[1] * (energy / sl->energy));
 		energy_cost = MAX(energy_cost, cost_per_sample *
-		    precip_intens_dn * (energy / sl->energy));
+		    precip_intens[2] * (energy / sl->energy));
 
 		sl->energy_out[i] = energy_cost;
 		energy = MAX(0, energy - energy_cost);
@@ -401,7 +436,7 @@ static void
 transfer_new_efis_frame(void)
 {
 	double range = efis_map_ranges[MIN((unsigned)dr_geti(&drs.EFIS.range),
-	    EFIS_MAP_RANGE_640NM)];
+	    EFIS_MAP_NUM_RANGES - 1)];
 	GLint old_read_fbo, old_draw_fbo;
 
 	XPLMSetGraphicsState(0, 1, 0, 1, 1, 1, 1);

@@ -70,8 +70,10 @@ static openwxr_intf_t openwxr_intf = {
 	.get_beam_shadow = wxr_get_beam_shadow,
 	.set_standby = wxr_set_standby,
 	.get_standby = wxr_get_standby,
+	.draw = wxr_draw,
 	.clear_screen = wxr_clear_screen,
-	.draw = wxr_draw
+	.set_vert_mode = wxr_set_vert_mode,
+	.get_vert_mode = wxr_get_vert_mode
 };
 
 PLUGIN_API int

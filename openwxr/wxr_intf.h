@@ -76,6 +76,7 @@ typedef struct {
 	wxr_disp_t	disp_type;	/* The of radar display to draw. */
 	double		scan_time;	/* Secs for one full swing side2side */
 	double		scan_angle;	/* Degrees btwn full lateral deflect */
+	double		scan_angle_vert;/* Degrees btwn full vertical deflect */
 } wxr_conf_t;
 
 #ifdef __cplusplus

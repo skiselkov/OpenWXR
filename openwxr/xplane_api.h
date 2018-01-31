@@ -51,6 +51,8 @@ typedef struct {
 	bool_t (*get_standby)(const wxr_t *wxr);
 	void (*draw)(wxr_t *wxr, vect2_t pos, vect2_t size);
 	void (*clear_screen)(wxr_t *wxr);
+	void (*set_vert_mode)(wxr_t *wxr, bool_t flag, double azimuth);
+	bool_t (*get_vert_mode)(const wxr_t *wxr);
 } openwxr_intf_t;
 
 typedef enum {
