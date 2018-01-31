@@ -1,0 +1,31 @@
+#!/bin/bash
+
+OUTPUT_DIR="OpenWXR"
+INSTALL="install -D -m 644"
+
+set -e
+
+rm -rf "$OUTPUT_DIR" "$OUTPUT_DIR.zip"
+mkdir -p "$OUTPUT_DIR"
+
+( cd qmake && ./build ) || exit 1
+
+if [[ $(uname) = "Linux" ]]; then
+	$INSTALL -- "qmake/output/64/lin.xpl" \
+	    "$OUTPUT_DIR/lin_x64/${OUTPUT_DIR}.xpl"
+	$INSTALL -- "qmake/output/64/win.xpl" \
+	    "$OUTPUT_DIR/win_x64/${OUTPUT_DIR}.xpl"
+else
+	$INSTALL -- "qmake/output/64/mac.xpl" \
+	    "$OUTPUT_DIR/mac_x64/${OUTPUT_DIR}.xpl"
+fi
+
+find data -iname '*.opus' -or -iname '*.glsl' | while read; do
+	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
+done
+
+$INSTALL -- "openwxr/xplane_api.h" "$OUTPUT_DIR/openwxr/xplane_api.h"
+$INSTALL -- "openwxr/wxr_intf.h" "$OUTPUT_DIR/openwxr/wxr_intf.h"
+
+# ZIP up the product
+zip -r "$OUTPUT_DIR.zip" "$OUTPUT_DIR"
