@@ -41,7 +41,7 @@ else()
 endif()
 
 include_directories(openwxr PUBLIC
-    "${LIBACFUTILS}/src" "${LIBACFUTILS}/glew" "..")
+    "${LIBACFUTILS}/src" "${LIBACFUTILS}/glew" ".." "${OPENGPWS}")
 
 #compiler flags
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror --std=c99 \

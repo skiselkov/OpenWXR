@@ -22,6 +22,9 @@
 #include <GL/glew.h>
 
 #include <XPLMGraphics.h>
+#include <XPLMPlugin.h>
+
+#include <opengpws/xplane_api.h>
 
 #include <acfutils/assert.h>
 #include <acfutils/helpers.h>
@@ -81,6 +84,9 @@ struct wxr_s {
 	/* unstructured, always safe to read & write */
 	uint32_t		*samples;
 	bool_t			beam_shadow;
+
+	XPLMPluginID		opengpws;
+	const egpws_intf_t	*terr;
 
 	worker_t		wk;
 };
@@ -227,6 +233,12 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->wxr_prog = shader_prog_from_file("smear", vtx, frag);
 	lacf_free(vtx);
 	lacf_free(frag);
+
+	wxr->opengpws = XPLMFindPluginBySignature(OPENGPWS_PLUGIN_SIG);
+	if (wxr->opengpws != XPLM_NO_PLUGIN_ID) {
+		XPLMSendMessageToPlugin(wxr->opengpws, EGPWS_GET_INTF,
+		    &wxr->terr);
+	}
 
 	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
 
