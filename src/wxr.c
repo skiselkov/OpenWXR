@@ -27,8 +27,10 @@
 #include <opengpws/xplane_api.h>
 
 #include <acfutils/assert.h>
+#include <acfutils/crc64.h>
 #include <acfutils/helpers.h>
 #include <acfutils/math.h>
+#include <acfutils/perf.h>
 #include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
@@ -37,9 +39,11 @@
 #include "wxr.h"
 #include "xplane.h"
 
-#define	TEX_UPD_INTVAL	40000		/* us, 25 fps */
-#define	WORKER_INTVAL	33333		/* us, 30 fps */
-#define	MAX_BEAM_ENERGY	1		/* dBmW */
+#define	TEX_UPD_INTVAL	40000			/* us, 25 fps */
+#define	WORKER_INTVAL	33333			/* us, 30 fps */
+#define	MAX_BEAM_ENERGY	1			/* dBmW */
+#define	EARTH_CIRC	(2 * EARTH_MSL * M_PI)	/* meters */
+#define	MAX_TERR_LAT	85
 
 struct wxr_s {
 	const wxr_conf_t	*conf;
@@ -80,6 +84,7 @@ struct wxr_s {
 	unsigned		ant_pos_vert;
 	bool_t			scan_right;
 	scan_line_t		sl;
+	egpws_terr_probe_t	tp;
 
 	/* unstructured, always safe to read & write */
 	uint32_t		*samples;
@@ -91,11 +96,25 @@ struct wxr_s {
 	worker_t		wk;
 };
 
+static vect3_t
+randomize_normal(vect3_t norm)
+{
+	double rx = 0.9 + ((double)crc64_rand() / UINT64_MAX) / 5;
+	double ry = 0.9 + ((double)crc64_rand() / UINT64_MAX) / 5;
+	double rz = 0.9 + ((double)crc64_rand() / UINT64_MAX) / 5;
+	return (VECT3(norm.x * rx, norm.y * ry, norm.z * rz));
+}
+
 static bool_t
 wxr_worker(void *userinfo)
 {
 	wxr_t *wxr = userinfo;
 	double ant_pitch, acf_hdg, acf_pitch;
+	vect2_t degree_sz;
+	static uint64_t total = 0, last_report = 0;
+	uint64_t start, end;
+
+	start = microclock();
 
 	mutex_enter(&wxr->lock);
 
@@ -111,12 +130,40 @@ wxr_worker(void *userinfo)
 
 	mutex_exit(&wxr->lock);
 
+	degree_sz = VECT2(
+	    (EARTH_CIRC / 360.0) * cos(DEG2RAD(wxr->sl.origin.lat)),
+	    (EARTH_CIRC / 360.0));
+
+	/*
+	 * A word on terrain drawing.
+	 *
+	 * We need to pass LATxLON points to OpenGPWS to give us terrain
+	 * elevations, but since doing proper FPP-to-GEO transformations
+	 * for each point would be pretty expensive (tons of trig), we
+	 * fudge it by instead projecting lines at a fixed LATxLON
+	 * increment using our heading. Essentially, we are projecting
+	 * rhumb lines instead of true radials, but for the short terrain
+	 * distances that we care about (at most around 100km), that is
+	 * "close enough" that we don't need to care.
+	 */
+	if (wxr->tp.in_pts == NULL) {
+		wxr->tp.num_pts = wxr->conf->res_y;
+		wxr->tp.in_pts = calloc(wxr->tp.num_pts,
+		    sizeof (*wxr->tp.in_pts));
+		wxr->tp.out_elev = calloc(wxr->tp.num_pts,
+		    sizeof (*wxr->tp.out_elev));
+		wxr->tp.out_norm = calloc(wxr->tp.num_pts,
+		    sizeof (*wxr->tp.out_norm));
+	}
+
 	for (unsigned i = 0;
 	    i < (unsigned)(wxr->conf->res_x * (USEC2SEC(WORKER_INTVAL) /
 	    wxr->conf->scan_time)); i++) {
-		double ant_hdg;
+		double ant_hdg, ant_pitch_up_down;
 		int off;
-		double energy_spent = 0;
+		double energy_spent[2] = { 0, 0 };
+		vect2_t ant_dir, ant_dir_neg;
+		double sin_ant_pitch[3];
 
 		/*
 		 * Move the antenna by one notch left/right (or up/down
@@ -152,40 +199,125 @@ wxr_worker(void *userinfo)
 		    ((wxr->ant_pos / (double)wxr->conf->res_x) - 0.5));
 		ant_hdg = acf_hdg + wxr->sl.ant_rhdg;
 		if (wxr->vert_mode) {
-			ant_pitch = acf_pitch + (wxr->conf->scan_angle_vert *
+			UNUSED(acf_pitch);
+			ant_pitch = /*acf_pitch - */
+			    -(wxr->conf->scan_angle_vert *
 			    ((wxr->ant_pos_vert / (double)wxr->conf->res_x) -
 			    0.5));
 			ant_pitch = clamp(ant_pitch, -90, 90);
 		}
 		wxr->sl.dir = VECT2(ant_hdg, ant_pitch);
+		ant_pitch_up_down = ant_pitch;
 		wxr->sl.vert_scan = wxr->vert_mode;
 
 		wxr->atmo->probe(&wxr->sl);
+
+		ant_dir = hdg2dir(ant_hdg);
+		ant_dir_neg = vect2_neg(ant_dir);
+		sin_ant_pitch[0] = sin(DEG2RAD(ant_pitch_up_down -
+		    wxr->conf->beam_shape.y / 2));
+		sin_ant_pitch[1] = sin(DEG2RAD(ant_pitch_up_down));
+		sin_ant_pitch[2] = sin(DEG2RAD(ant_pitch_up_down +
+		    wxr->conf->beam_shape.y / 2));
+
+		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
+			double d = ((double)j / wxr->conf->res_y) *
+			    wxr->sl.range;
+			vect2_t disp_m = vect2_scmul(ant_dir, d);
+			vect2_t disp_deg = VECT2(disp_m.x / degree_sz.x,
+			    disp_m.y / degree_sz.y);
+			geo_pos2_t p = GEO_POS2(wxr->sl.origin.lat + disp_deg.y,
+			    wxr->sl.origin.lon + disp_deg.x);
+			/*
+			 * Handle geo coordinate wrapping.
+			 */
+			p.lat = clamp(p.lat, -MAX_TERR_LAT, MAX_TERR_LAT);
+			if (p.lon <= -180.0)
+				p.lon += 360;
+			else if (p.lon >= 180.0)
+				p.lon -= 360.0;
+			ASSERT(is_valid_lat(p.lat));
+			ASSERT(is_valid_lon(p.lon));
+			wxr->tp.in_pts[j] = p;
+		}
+		wxr->terr->terr_probe(&wxr->tp);
 
 		/*
 		 * No need to lock the samples, worst case is we will
 		 * draw a partially updated scan line - no big deal.
 		 */
 		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
-			double energy = wxr->sl.energy_out[j];
+			double energy[2] = {
+			    wxr->sl.energy_out[j] * 0.5,
+			    wxr->sl.energy_out[j] * 0.5
+			};
 			double sample_sz = wxr->sl.range / wxr->sl.num_samples;
 			double sample_sz_rat = sample_sz / 1000.0;
-			double abs_energy = energy / sample_sz_rat;
+			double abs_energy;
+			/* Distance of point along scan line from antenna. */
+			double d = ((double)j / wxr->conf->res_y) *
+			    wxr->sl.range;
+			int64_t elev_rand_lim = iter_fract(d, 0, 100000,
+			    B_TRUE) * 3000 + 10;
+			int64_t elev_rand = (crc64_rand() % elev_rand_lim) -
+			    (elev_rand_lim / 2);
+			double terr_elev = wxr->tp.out_elev[j] + elev_rand;
+			vect2_t ant_dir_neg_m = vect2_scmul(ant_dir_neg, d);
+			/* Reverse vector from ground point to the antenna. */
+			vect3_t back_v = vect3_unit(VECT3(ant_dir_neg_m.x,
+			    ant_dir_neg_m.y, wxr->sl.origin.elev - terr_elev),
+			    NULL);
+			double ground_absorb[2], ground_return[2];
 
-			energy_spent += energy;
-			if (energy_spent > 0.8 && wxr->beam_shadow) {
+			for (int k = 0; k < 2; k++) {
+				/* How perpendicular is the ground to us */
+				vect3_t norm =
+				    randomize_normal(wxr->tp.out_norm[j]);
+				double fract_dir = vect3_dotprod(back_v, norm);
+				double elev_min = wxr->sl.origin.elev +
+				    sin_ant_pitch[k] * d;
+				double elev_max = wxr->sl.origin.elev +
+				    sin_ant_pitch[k + 1] * d + 1;
+				/*
+				 * Fraction of how much of the beam is below
+				 * ground.
+				 */
+				double fract_hit = iter_fract(terr_elev,
+				    elev_min, elev_max, B_TRUE) / 5;
+				ground_absorb[k] = ((1 - energy_spent[k]) *
+				    fract_hit) * sample_sz_rat;
+				ground_return[k] = ((1 - energy_spent[k]) *
+				    fract_hit * (fract_dir + 0.8) * 0.05);
+			}
+
+			abs_energy = (energy[0] + energy[1]) / sample_sz_rat +
+			    ground_return[0] + ground_return[1];
+			energy_spent[0] += (energy[0] + ground_absorb[0]);
+			energy_spent[1] += (energy[1] + ground_absorb[1]);
+
+			if (energy_spent[0] + energy_spent[1] > 0.8 &&
+			    wxr->beam_shadow)
 				wxr->samples[off + j] = 0xff505050u;
-			} else if (wxr->gain * abs_energy >= 0.02 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.056 * 0.6)
 				wxr->samples[off + j] = 0xffa564d8u;
-			else if (wxr->gain * abs_energy >= 0.03 / 2 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.084 / 2 * 0.6)
 				wxr->samples[off + j] = 0xff2420edu;
-			else if (wxr->gain * abs_energy >= 0.03 / 3 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.084 / 3 * 0.6)
 				wxr->samples[off + j] = 0xff00f2ffu;
-			else if (wxr->gain * abs_energy >= 0.03 / 4 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.084 / 4 * 0.6)
 				wxr->samples[off + j] = 0xff55c278u;
 			else
 				wxr->samples[off + j] = 0xff000000u;
 		}
+	}
+
+	end = microclock();
+
+	total += end - start;
+	if (end - last_report > SEC2USEC(10)) {
+		printf("%.2f%%\n", (((double)total) / SEC2USEC(10)) * 100);
+		total = 0;
+		last_report = end;
 	}
 
 	return (B_TRUE);
@@ -248,6 +380,9 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 void
 wxr_fini(wxr_t *wxr)
 {
+	if (!wxr->standby)
+		worker_fini(&wxr->wk);
+
 	if (wxr->tex != 0)
 		glDeleteTextures(2, wxr->tex);
 	if (wxr->pbo != 0)
@@ -259,8 +394,9 @@ wxr_fini(wxr_t *wxr)
 	free(wxr->samples);
 	free(wxr->sl.energy_out);
 	free(wxr->sl.doppler_out);
-	if (!wxr->standby)
-		worker_fini(&wxr->wk);
+	free(wxr->tp.in_pts);
+	free(wxr->tp.out_elev);
+	free(wxr->tp.out_norm);
 
 	if (wxr->wxr_prog != 0)
 		glDeleteProgram(wxr->wxr_prog);

@@ -170,7 +170,7 @@ atmo_xp11_set_range(double range)
 static void
 atmo_xp11_probe(scan_line_t *sl)
 {
-#define	COST_PER_1KM	0.025
+#define	COST_PER_1KM	0.07
 	double range;
 	double dir_rand1 = (sin(DEG2RAD(sl->dir.x) * 6.7768) *
 	    sin(DEG2RAD(sl->dir.x) * 18.06) *
