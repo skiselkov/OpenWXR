@@ -62,6 +62,8 @@ bool_t wxr_get_vert_mode(const wxr_t *wxr);
 
 void wxr_clear_screen(wxr_t *wxr);
 
+void wxr_set_colors(wxr_t *wxr, const uint32_t colors[4]);
+
 #ifdef __cplusplus
 }
 #endif

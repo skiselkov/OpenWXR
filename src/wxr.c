@@ -53,6 +53,8 @@ struct wxr_s {
 	unsigned		cur_tex;
 	GLuint			tex[2];
 	GLuint			pbo;
+	GLuint			shadow_tex[2];
+	GLuint			shadow_pbo;
 	GLsync			upload_sync;
 	uint64_t		last_upload;
 	GLuint			wxr_prog;
@@ -78,6 +80,7 @@ struct wxr_s {
 	unsigned		azi_lim_right;
 	double			pitch_stab;
 	double			roll_stab;
+	uint32_t		colors[4];
 
 	/* only accessed from worker thread */
 	unsigned		ant_pos;
@@ -88,6 +91,7 @@ struct wxr_s {
 
 	/* unstructured, always safe to read & write */
 	uint32_t		*samples;
+	uint32_t		*shadow_samples;
 	bool_t			beam_shadow;
 
 	XPLMPluginID		opengpws;
@@ -111,10 +115,7 @@ wxr_worker(void *userinfo)
 	wxr_t *wxr = userinfo;
 	double ant_pitch, acf_hdg, acf_pitch;
 	vect2_t degree_sz;
-	static uint64_t total = 0, last_report = 0;
-	uint64_t start, end;
-
-	start = microclock();
+	uint32_t colors[4];
 
 	mutex_enter(&wxr->lock);
 
@@ -127,6 +128,7 @@ wxr_worker(void *userinfo)
 	ant_pitch = wxr->ant_pitch_req;
 	acf_hdg = wxr->acf_orient.y;
 	acf_pitch = wxr->acf_orient.x;
+	memcpy(colors, wxr->colors, sizeof (colors));
 
 	mutex_exit(&wxr->lock);
 
@@ -176,7 +178,7 @@ wxr_worker(void *userinfo)
 				wxr->ant_pos_vert++;
 			if ((!wxr->vert_mode &&
 			    (wxr->ant_pos == wxr->conf->res_x - 1 ||
-			    wxr->ant_pos == wxr->azi_lim_right)) ||
+			    wxr->ant_pos >= wxr->azi_lim_right)) ||
 			    (wxr->vert_mode &&
 			    wxr->ant_pos_vert == wxr->conf->res_x - 1))
 				wxr->scan_right = B_FALSE;
@@ -186,7 +188,7 @@ wxr_worker(void *userinfo)
 			else
 				wxr->ant_pos_vert--;
 			if ((!wxr->vert_mode && (wxr->ant_pos == 0 ||
-			    wxr->ant_pos == wxr->azi_lim_left)) ||
+			    wxr->ant_pos <= wxr->azi_lim_left)) ||
 			    (wxr->vert_mode && wxr->ant_pos_vert == 0))
 				wxr->scan_right = B_TRUE;
 		}
@@ -283,11 +285,16 @@ wxr_worker(void *userinfo)
 				 * ground.
 				 */
 				double fract_hit = iter_fract(terr_elev,
-				    elev_min, elev_max, B_TRUE) / 5;
+				    elev_min, elev_max, B_FALSE) / 5;
+
+				fract_hit = MAX(fract_hit, 0);
+				if (fract_hit > 1)
+					fract_hit = POW3(fract_hit);
+				fract_dir = MAX(fract_dir, 0);
 				ground_absorb[k] = ((1 - energy_spent[k]) *
 				    fract_hit) * sample_sz_rat;
 				ground_return[k] = ((1 - energy_spent[k]) *
-				    fract_hit * (fract_dir + 0.8) * 0.05);
+				    fract_hit * (fract_dir + 0.8) * 0.07);
 			}
 
 			abs_energy = (energy[0] + energy[1]) / sample_sz_rat +
@@ -295,29 +302,25 @@ wxr_worker(void *userinfo)
 			energy_spent[0] += (energy[0] + ground_absorb[0]);
 			energy_spent[1] += (energy[1] + ground_absorb[1]);
 
-			if (energy_spent[0] + energy_spent[1] > 0.8 &&
-			    wxr->beam_shadow)
-				wxr->samples[off + j] = 0xff505050u;
-			else if (wxr->gain * abs_energy >= 0.056 * 0.6)
-				wxr->samples[off + j] = 0xffa564d8u;
+			if (energy_spent[0] + energy_spent[1] > 0.95 &&
+			    wxr->beam_shadow) {
+				wxr->shadow_samples[off + j] =
+				    BE32(0x70707070u);
+			} else {
+				wxr->shadow_samples[off + j] = 0x00u;
+			}
+
+			if (wxr->gain * abs_energy >= 0.056 * 0.6)
+				wxr->samples[off + j] = colors[0];
 			else if (wxr->gain * abs_energy >= 0.084 / 2 * 0.6)
-				wxr->samples[off + j] = 0xff2420edu;
+				wxr->samples[off + j] = colors[1];
 			else if (wxr->gain * abs_energy >= 0.084 / 3 * 0.6)
-				wxr->samples[off + j] = 0xff00f2ffu;
+				wxr->samples[off + j] = colors[2];
 			else if (wxr->gain * abs_energy >= 0.084 / 4 * 0.6)
-				wxr->samples[off + j] = 0xff55c278u;
+				wxr->samples[off + j] = colors[3];
 			else
-				wxr->samples[off + j] = 0xff000000u;
+				wxr->samples[off + j] = 0x00u;
 		}
-	}
-
-	end = microclock();
-
-	total += end - start;
-	if (end - last_report > SEC2USEC(10)) {
-		printf("%.2f%%\n", (((double)total) / SEC2USEC(10)) * 100);
-		total = 0;
-		last_report = end;
 	}
 
 	return (B_TRUE);
@@ -351,6 +354,8 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->draw_num_coords = 4 * 2 * ceil(conf->scan_angle);
 	wxr->draw_num_coords_vert = 4 * 2 * ceil(conf->scan_angle_vert);
 	wxr->samples = calloc(conf->res_x * conf->res_y,
+	    sizeof (*wxr->samples));
+	wxr->shadow_samples = calloc(conf->res_x * conf->res_y,
 	    sizeof (*wxr->samples));
 	wxr->ant_pos = conf->res_x / 2;
 	wxr->azi_lim_right = conf->res_x - 1;
@@ -387,11 +392,16 @@ wxr_fini(wxr_t *wxr)
 		glDeleteTextures(2, wxr->tex);
 	if (wxr->pbo != 0)
 		glDeleteBuffers(1, &wxr->pbo);
+	if (wxr->shadow_tex != 0)
+		glDeleteTextures(2, wxr->shadow_tex);
+	if (wxr->shadow_pbo != 0)
+		glDeleteBuffers(1, &wxr->shadow_pbo);
 
 	free(wxr->draw_vtx_coords);
 	free(wxr->draw_tex_coords);
 
 	free(wxr->samples);
+	free(wxr->shadow_samples);
 	free(wxr->sl.energy_out);
 	free(wxr->sl.doppler_out);
 	free(wxr->tp.in_pts);
@@ -529,8 +539,34 @@ wxr_get_stab(const wxr_t *wxr, bool_t *pitch, bool_t *roll)
 	*roll = wxr->roll_stab;
 }
 
+static void
+apply_pbo_tex(GLuint pbo, GLuint tex, GLuint res_x, GLuint res_y)
+{
+	XPLMBindTexture2d(tex, GL_TEXTURE_2D);
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, res_x, res_y, 0, GL_RGBA,
+	    GL_UNSIGNED_BYTE, NULL);
+}
+
+static void
+async_xfer_setup(GLuint pbo, void *buf, size_t sz)
+{
+	void *ptr;
+
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+	glBufferData(GL_PIXEL_UNPACK_BUFFER, sz, 0, GL_STREAM_DRAW);
+	ptr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+	if (ptr != NULL) {
+		memcpy(ptr, buf, sz);
+		glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+	} else {
+		logMsg("Error uploading WXR texture: "
+		    "glMapBuffer returned NULL");
+	}
+}
+
 GLuint
-wxr_get_cur_tex(wxr_t *wxr)
+wxr_get_cur_tex(wxr_t *wxr, bool_t shadow_tex)
 {
 	uint64_t now = microclock();
 
@@ -545,12 +581,12 @@ wxr_get_cur_tex(wxr_t *wxr)
 			wxr->upload_sync = 0;
 			wxr->cur_tex = !wxr->cur_tex;
 
-			XPLMBindTexture2d(wxr->tex[wxr->cur_tex],
-			    GL_TEXTURE_2D);
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, wxr->pbo);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-			    wxr->conf->res_x, wxr->conf->res_y, 0, GL_RGBA,
-			    GL_UNSIGNED_BYTE, NULL);
+			apply_pbo_tex(wxr->pbo, wxr->tex[wxr->cur_tex],
+			    wxr->conf->res_x, wxr->conf->res_y);
+			apply_pbo_tex(wxr->shadow_pbo,
+			    wxr->shadow_tex[wxr->cur_tex],
+			    wxr->conf->res_x, wxr->conf->res_y);
+
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		}
 	} else {
@@ -560,38 +596,34 @@ wxr_get_cur_tex(wxr_t *wxr)
 		 * current time as the time of the upload, so that we are
 		 * not slipping frame timing.
 		 */
-		void *ptr;
 		size_t sz = wxr->conf->res_x * wxr->conf->res_y *
 		    sizeof (*wxr->samples);
 
-		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, wxr->pbo);
-		glBufferData(GL_PIXEL_UNPACK_BUFFER, sz, 0, GL_STREAM_DRAW);
-		ptr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
-		if (ptr != NULL) {
-			memcpy(ptr, wxr->samples, sz);
-			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-			wxr->upload_sync =
-			    glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-		} else {
-			logMsg("Error uploading WXR instance %p: "
-			    "glMapBuffer returned NULL", wxr);
-		}
+		async_xfer_setup(wxr->pbo, wxr->samples, sz);
+		async_xfer_setup(wxr->shadow_pbo, wxr->shadow_samples, sz);
+		wxr->upload_sync =
+		    glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		wxr->last_upload = now;
 	}
 
 out:
-	return (wxr->tex[wxr->cur_tex]);
+	if (!shadow_tex)
+		return (wxr->tex[wxr->cur_tex]);
+	else
+		return (wxr->shadow_tex[wxr->cur_tex]);
 }
 
 static void
-wxr_bind_tex(wxr_t *wxr)
+wxr_bind_tex(wxr_t *wxr, bool_t shadow_tex)
 {
-	if (wxr->pbo == 0)
+	if (wxr->pbo == 0) {
 		glGenBuffers(1, &wxr->pbo);
+		glGenBuffers(1, &wxr->shadow_pbo);
+	}
 
 	if (wxr->tex[0] != 0) {
-		GLuint tex = wxr_get_cur_tex(wxr);
+		GLuint tex = wxr_get_cur_tex(wxr, shadow_tex);
 		ASSERT(tex != 0);
 		glActiveTexture(GL_TEXTURE0);
 		XPLMBindTexture2d(tex, GL_TEXTURE_2D);
@@ -600,18 +632,39 @@ wxr_bind_tex(wxr_t *wxr)
 		ASSERT(wxr->cur_tex == 0);
 
 		glGenTextures(2, wxr->tex);
+		glGenTextures(2, wxr->shadow_tex);
+
 		for (int i = 0; i < 2; i++) {
 			XPLMBindTexture2d(wxr->tex[i], GL_TEXTURE_2D);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
 			    GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
 			    GL_LINEAR);
+
+			XPLMBindTexture2d(wxr->shadow_tex[i], GL_TEXTURE_2D);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+			    GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+			    GL_LINEAR);
 		}
+
 		glActiveTexture(GL_TEXTURE0);
+
 		XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
 		    wxr->conf->res_x, wxr->conf->res_y, 0,
 		    GL_RGBA, GL_UNSIGNED_BYTE, wxr->samples);
+
+		XPLMBindTexture2d(wxr->shadow_tex[0], GL_TEXTURE_2D);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+		    wxr->conf->res_x, wxr->conf->res_y, 0,
+		    GL_RGBA, GL_UNSIGNED_BYTE, wxr->shadow_samples);
+
+		if (!shadow_tex) {
+			XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
+		} else {
+			XPLMBindTexture2d(wxr->shadow_tex[0], GL_TEXTURE_2D);
+		}
 	}
 }
 
@@ -727,6 +780,8 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
+	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "smear_mult"),
+	    wxr->vert_mode ? 3 : 1);
 
 	glVertexPointer(2, GL_FLOAT, 0, wxr->draw_vtx_coords);
 	glTexCoordPointer(2, GL_FLOAT, 0, wxr->draw_tex_coords);
@@ -781,13 +836,18 @@ wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
 	glGetError();
 	XPLMSetGraphicsState(0, 1, 0, 1, 1, 1, 1);
-	wxr_bind_tex(wxr);
+	wxr_bind_tex(wxr, B_FALSE);
 	if (wxr->conf->disp_type == WXR_DISP_ARC) {
 		wxr_draw_arc(wxr, pos, size);
 	} else {
 		ASSERT3U(wxr->conf->disp_type, ==, WXR_DISP_SQUARE);
 		wxr_draw_square(wxr, pos, size);
 	}
+	wxr_bind_tex(wxr, B_TRUE);
+	if (wxr->conf->disp_type == WXR_DISP_ARC)
+		wxr_draw_arc(wxr, pos, size);
+	else
+		wxr_draw_square(wxr, pos, size);
 }
 
 void
@@ -813,6 +873,8 @@ wxr_set_standby(wxr_t *wxr, bool_t flag)
 			wxr->ant_pos = wxr->conf->res_x / 2;
 			memset(wxr->samples, 0, sizeof (*wxr->samples) *
 			    wxr->conf->res_x * wxr->conf->res_y);
+			memset(wxr->shadow_samples, 0, sizeof (*wxr->samples) *
+			    wxr->conf->res_x * wxr->conf->res_y);
 		} else {
 			worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
 		}
@@ -830,8 +892,10 @@ wxr_clear_screen(wxr_t *wxr)
 {
 	mutex_enter(&wxr->wk.lock);
 	mutex_enter(&wxr->lock);
-	memset(wxr->samples, 0, sizeof (*wxr->samples) * wxr->conf->res_x *
-	    wxr->conf->res_y);
+	memset(wxr->samples, 0,
+	    sizeof (*wxr->samples) * wxr->conf->res_x * wxr->conf->res_y);
+	memset(wxr->shadow_samples, 0,
+	    sizeof (*wxr->samples) * wxr->conf->res_x * wxr->conf->res_y);
 	mutex_exit(&wxr->lock);
 	mutex_exit(&wxr->wk.lock);
 }
@@ -861,6 +925,8 @@ wxr_set_vert_mode(wxr_t *wxr, bool_t flag, double azimuth)
 		wxr->vert_mode = B_FALSE;
 		memset(wxr->samples, 0, sizeof (*wxr->samples) *
 		    wxr->conf->res_x * wxr->conf->res_y);
+		memset(wxr->shadow_samples, 0, sizeof (*wxr->samples) *
+		    wxr->conf->res_x * wxr->conf->res_y);
 	}
 
 	mutex_exit(&wxr->lock);
@@ -871,4 +937,16 @@ bool_t
 wxr_get_vert_mode(const wxr_t *wxr)
 {
 	return (wxr->vert_mode);
+}
+
+/*
+ * Colors should be in big-endian RGBA ('R' in top bits, 'A' in bottom bits).
+ */
+void
+wxr_set_colors(wxr_t *wxr, const uint32_t colors[4])
+{
+	mutex_enter(&wxr->lock);
+	for (int i = 0; i < 4; i++)
+		wxr->colors[i] = colors[i];
+	mutex_exit(&wxr->lock);
 }

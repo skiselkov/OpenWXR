@@ -53,6 +53,7 @@ typedef struct {
 	void (*clear_screen)(wxr_t *wxr);
 	void (*set_vert_mode)(wxr_t *wxr, bool_t flag, double azimuth);
 	bool_t (*get_vert_mode)(const wxr_t *wxr);
+	void (*set_colors)(wxr_t *wxr, const uint32_t colors[4]);
 } openwxr_intf_t;
 
 typedef enum {

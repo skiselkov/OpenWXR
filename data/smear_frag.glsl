@@ -18,8 +18,9 @@
 
 #version 120
 
-uniform sampler2D tex;
-uniform vec2 tex_size;
+uniform	sampler2D	tex;
+uniform	vec2		tex_size;
+uniform	float		smear_mult;
 
 void
 main()
@@ -34,11 +35,12 @@ main()
 		float s3 = sin(gl_TexCoord[0].s * 181.959);
 		float s4 = sin(gl_TexCoord[0].s * 314.159);
 		float s5 = sin(gl_TexCoord[0].s * 547.363);
-		float smear_s = (10.0 * s1 * s2 * s3 * s4 * s5) / tex_size.x;
+		float smear_s = (smear_mult * 10.0 * s1 * s2 * s3 * s4 * s5) /
+		    tex_size.x;
 
 		float t1 = sin(gl_TexCoord[0].t * 16.1803);
 		float t2 = sin(gl_TexCoord[0].t * 95.828);
-		float smear_t = (4.0 * t1) / tex_size.y;
+		float smear_t = (4.0 * smear_mult * t1) / tex_size.y;
 		vec4 sample;
 
 		/*
