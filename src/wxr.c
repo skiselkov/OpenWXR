@@ -116,6 +116,7 @@ wxr_worker(void *userinfo)
 	double ant_pitch, acf_hdg, acf_pitch;
 	vect2_t degree_sz;
 	uint32_t colors[4];
+	double scan_time;
 
 	mutex_enter(&wxr->lock);
 
@@ -158,9 +159,20 @@ wxr_worker(void *userinfo)
 		    sizeof (*wxr->tp.out_norm));
 	}
 
-	for (unsigned i = 0;
-	    i < (unsigned)(wxr->conf->res_x * (USEC2SEC(WORKER_INTVAL) /
-	    wxr->conf->scan_time)); i++) {
+	/*
+	 * We want to maintain a constant scan rate, but in vertical mode
+	 * we often scan a different sector size, so adjust the scan time
+	 * so that we scan a constant degrees/second rate.
+	 */
+	if (!wxr->vert_mode) {
+		scan_time = wxr->conf->scan_time;
+	} else {
+		scan_time = (wxr->conf->scan_angle_vert /
+		    wxr->conf->scan_angle) * wxr->conf->scan_time;
+	}
+
+	for (unsigned i = 0; i < (unsigned)(wxr->conf->res_x *
+	    (USEC2SEC(WORKER_INTVAL) / scan_time)); i++) {
 		double ant_hdg, ant_pitch_up_down;
 		int off;
 		double energy_spent[2] = { 0, 0 };
