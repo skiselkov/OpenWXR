@@ -157,6 +157,8 @@ wxr_worker(void *userinfo)
 		    sizeof (*wxr->tp.out_elev));
 		wxr->tp.out_norm = calloc(wxr->tp.num_pts,
 		    sizeof (*wxr->tp.out_norm));
+		wxr->tp.out_water = calloc(wxr->tp.num_pts,
+		    sizeof (*wxr->tp.out_water));
 	}
 
 	/*
@@ -287,7 +289,8 @@ wxr_worker(void *userinfo)
 				/* How perpendicular is the ground to us */
 				vect3_t norm =
 				    randomize_normal(wxr->tp.out_norm[j]);
-				double fract_dir = vect3_dotprod(back_v, norm);
+				double fract_dir =
+				    vect3_dotprod(back_v, norm);
 				double elev_min = wxr->sl.origin.elev +
 				    sin_ant_pitch[k] * d;
 				double elev_max = wxr->sl.origin.elev +
@@ -306,7 +309,8 @@ wxr_worker(void *userinfo)
 				ground_absorb[k] = ((1 - energy_spent[k]) *
 				    fract_hit) * sample_sz_rat;
 				ground_return[k] = ((1 - energy_spent[k]) *
-				    fract_hit * (fract_dir + 0.8) * 0.07);
+				    fract_hit * (fract_dir + 0.8) * 0.07) *
+				    (1 - wxr->tp.out_water[j] * 0.8);
 			}
 
 			abs_energy = (energy[0] + energy[1]) / sample_sz_rat +
@@ -419,6 +423,7 @@ wxr_fini(wxr_t *wxr)
 	free(wxr->tp.in_pts);
 	free(wxr->tp.out_elev);
 	free(wxr->tp.out_norm);
+	free(wxr->tp.out_water);
 
 	if (wxr->wxr_prog != 0)
 		glDeleteProgram(wxr->wxr_prog);
