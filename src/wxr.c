@@ -44,6 +44,7 @@
 #define	MAX_BEAM_ENERGY	1			/* dBmW */
 #define	EARTH_CIRC	(2 * EARTH_MSL * M_PI)	/* meters */
 #define	MAX_TERR_LAT	85
+#define	GROUND_RETURN_MULT	0.2		/* energy multiplier */
 
 struct wxr_s {
 	const wxr_conf_t	*conf;
@@ -74,6 +75,7 @@ struct wxr_s {
 	geo_pos3_t		acf_pos;
 	vect3_t			acf_orient;
 	unsigned		cur_range;
+	bool_t			gnd_sense;
 	double			gain;
 	double			ant_pitch_req;
 	unsigned		azi_lim_left;
@@ -117,6 +119,17 @@ wxr_worker(void *userinfo)
 	vect2_t degree_sz;
 	uint32_t colors[4];
 	double scan_time;
+	double sample_sz = wxr->sl.range / wxr->sl.num_samples;
+	double sample_sz_rat = sample_sz / 1000.0;
+
+#ifdef	WXR_PROFILE
+	uint64_t now = microclock();
+	static uint64_t last_report_time = 0;
+	static uint64_t total_time = 0;
+	uint64_t start, end;
+
+	start = now;
+#endif	/* WXR_PROFILE */
 
 	mutex_enter(&wxr->lock);
 
@@ -175,12 +188,14 @@ wxr_worker(void *userinfo)
 
 	for (unsigned i = 0; i < (unsigned)(wxr->conf->res_x *
 	    (USEC2SEC(WORKER_INTVAL) / scan_time)); i++) {
+		enum { NUM_VERT_SECTORS = 10 };
 		double ant_hdg, ant_pitch_up_down;
 		int off;
-		double energy_spent[2] = { 0, 0 };
+		double energy_spent[NUM_VERT_SECTORS];
 		vect2_t ant_dir, ant_dir_neg;
-		double sin_ant_pitch[3];
+		double sin_ant_pitch[NUM_VERT_SECTORS + 1];
 
+		memset(energy_spent, 0, sizeof (energy_spent));
 		/*
 		 * Move the antenna by one notch left/right (or up/down
 		 * when in vertical mode).
@@ -230,12 +245,12 @@ wxr_worker(void *userinfo)
 
 		ant_dir = hdg2dir(ant_hdg);
 		ant_dir_neg = vect2_neg(ant_dir);
-		sin_ant_pitch[0] = sin(DEG2RAD(ant_pitch_up_down -
-		    wxr->conf->beam_shape.y / 2));
-		sin_ant_pitch[1] = sin(DEG2RAD(ant_pitch_up_down));
-		sin_ant_pitch[2] = sin(DEG2RAD(ant_pitch_up_down +
-		    wxr->conf->beam_shape.y / 2));
-
+		for (int j = 0; j < NUM_VERT_SECTORS + 1; j++) {
+			double angle = ant_pitch_up_down -
+			    wxr->conf->beam_shape.y / 2 +
+			    (wxr->conf->beam_shape.y / NUM_VERT_SECTORS) * j;
+			sin_ant_pitch[j] = sin(DEG2RAD(angle));
+		}
 		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
 			double d = ((double)j / wxr->conf->res_y) *
 			    wxr->sl.range;
@@ -263,13 +278,9 @@ wxr_worker(void *userinfo)
 		 * draw a partially updated scan line - no big deal.
 		 */
 		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
-			double energy[2] = {
-			    wxr->sl.energy_out[j] * 0.5,
-			    wxr->sl.energy_out[j] * 0.5
-			};
-			double sample_sz = wxr->sl.range / wxr->sl.num_samples;
-			double sample_sz_rat = sample_sz / 1000.0;
-			double abs_energy;
+			double energy[NUM_VERT_SECTORS];
+			double abs_energy = 0;
+			double energy_spent_total = 0;
 			/* Distance of point along scan line from antenna. */
 			double d = ((double)j / wxr->conf->res_y) *
 			    wxr->sl.range;
@@ -283,43 +294,56 @@ wxr_worker(void *userinfo)
 			vect3_t back_v = vect3_unit(VECT3(ant_dir_neg_m.x,
 			    ant_dir_neg_m.y, wxr->sl.origin.elev - terr_elev),
 			    NULL);
-			double ground_absorb[2], ground_return[2];
+			double ground_absorb[NUM_VERT_SECTORS];
+			double ground_return[NUM_VERT_SECTORS];
+			double ground_return_total = 0;
+			vect3_t norm;
+			double fract_dir;
 
-			for (int k = 0; k < 2; k++) {
+			for (int k = 0; k < NUM_VERT_SECTORS; k++) {
+				energy[k] = wxr->sl.energy_out[j] /
+				    NUM_VERT_SECTORS;
+			}
+
+			norm = randomize_normal(wxr->tp.out_norm[j]);
+			fract_dir = vect3_dotprod(back_v, norm);
+			fract_dir = MAX(fract_dir, 0);
+
+			for (int k = 0; k < NUM_VERT_SECTORS; k++) {
 				/* How perpendicular is the ground to us */
-				vect3_t norm =
-				    randomize_normal(wxr->tp.out_norm[j]);
-				double fract_dir =
-				    vect3_dotprod(back_v, norm);
-				double elev_min = wxr->sl.origin.elev +
-				    sin_ant_pitch[k] * d;
-				double elev_max = wxr->sl.origin.elev +
-				    sin_ant_pitch[k + 1] * d + 1;
+				double elev_min;
+				double elev_max;
 				/*
 				 * Fraction of how much of the beam is below
 				 * ground.
 				 */
-				double fract_hit = iter_fract(terr_elev,
-				    elev_min, elev_max, B_FALSE) / 5;
+				double fract_hit;
 
-				fract_hit = MAX(fract_hit, 0);
-				if (fract_hit > 1)
-					fract_hit = POW3(fract_hit);
-				fract_dir = MAX(fract_dir, 0);
+				elev_min = wxr->sl.origin.elev +
+				    sin_ant_pitch[k] * d;
+				elev_max = wxr->sl.origin.elev +
+				    sin_ant_pitch[k + 1] * d + 1;
+				fract_hit = iter_fract(terr_elev, elev_min,
+				    elev_max, B_FALSE) / 5;
+				fract_hit = clamp(fract_hit, 0, 1);
 				ground_absorb[k] = ((1 - energy_spent[k]) *
 				    fract_hit) * sample_sz_rat;
 				ground_return[k] = ((1 - energy_spent[k]) *
-				    fract_hit * (fract_dir + 0.8) * 0.07) *
-				    (1 - wxr->tp.out_water[j] * 0.8);
+				    fract_hit * (fract_dir + 0.8) /
+				    NUM_VERT_SECTORS) * GROUND_RETURN_MULT *
+				    (1 - wxr->tp.out_water[j] * 0.9);
 			}
 
-			abs_energy = (energy[0] + energy[1]) / sample_sz_rat +
-			    ground_return[0] + ground_return[1];
-			energy_spent[0] += (energy[0] + ground_absorb[0]);
-			energy_spent[1] += (energy[1] + ground_absorb[1]);
+			for (int k = 0; k < NUM_VERT_SECTORS; k++) {
+				abs_energy += energy[k];
+				ground_return_total += ground_return[k];
+				energy_spent[k] += energy[k] + ground_absorb[k];
+				energy_spent_total += energy_spent[k];
+			}
+			abs_energy = (abs_energy / sample_sz_rat) +
+			    ground_return_total;
 
-			if (energy_spent[0] + energy_spent[1] > 0.95 &&
-			    wxr->beam_shadow) {
+			if (energy_spent_total > 0.98 && wxr->beam_shadow) {
 				wxr->shadow_samples[off + j] =
 				    BE32(0x70707070u);
 			} else {
@@ -332,12 +356,25 @@ wxr_worker(void *userinfo)
 				wxr->samples[off + j] = colors[1];
 			else if (wxr->gain * abs_energy >= 0.084 / 3 * 0.6)
 				wxr->samples[off + j] = colors[2];
-			else if (wxr->gain * abs_energy >= 0.084 / 4 * 0.6)
+			else if (wxr->gain * abs_energy >= 0.084 / 4 * 0.6 ||
+			    (wxr->gnd_sense &&
+			    wxr->gain * abs_energy >= 0.084 / 20 * 0.6))
 				wxr->samples[off + j] = colors[3];
 			else
 				wxr->samples[off + j] = 0x00u;
 		}
 	}
+
+#ifdef	WXR_PROFILE
+	end = microclock();
+	total_time += (end - start);
+	if (now - last_report_time > 1000000) {
+		printf("load: %.3f%%\n", (100.0 * total_time) /
+		    (now - last_report_time));
+		last_report_time = now;
+		total_time = 0;
+	}
+#endif	/* WXR_PROFILE */
 
 	return (B_TRUE);
 }
@@ -966,4 +1003,18 @@ wxr_set_colors(wxr_t *wxr, const uint32_t colors[4])
 	for (int i = 0; i < 4; i++)
 		wxr->colors[i] = colors[i];
 	mutex_exit(&wxr->lock);
+}
+
+void
+wxr_set_gnd_sense(wxr_t *wxr, bool_t flag)
+{
+	mutex_enter(&wxr->lock);
+	wxr->gnd_sense = flag;
+	mutex_exit(&wxr->lock);
+}
+
+bool_t
+wxr_get_gnd_sense(const wxr_t *wxr)
+{
+	return (wxr->gnd_sense);
 }

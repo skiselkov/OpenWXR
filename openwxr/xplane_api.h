@@ -54,6 +54,8 @@ typedef struct {
 	void (*set_vert_mode)(wxr_t *wxr, bool_t flag, double azimuth);
 	bool_t (*get_vert_mode)(const wxr_t *wxr);
 	void (*set_colors)(wxr_t *wxr, const uint32_t colors[4]);
+	void (*set_gnd_sense)(wxr_t *wxr, bool_t flag);
+	bool_t (*get_gnd_sense)(const wxr_t *wxr);
 } openwxr_intf_t;
 
 typedef enum {
