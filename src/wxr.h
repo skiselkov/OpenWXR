@@ -23,6 +23,7 @@
 
 #include "atmo.h"
 #include "../openwxr/wxr_intf.h"
+#include "../openwxr/xplane_api.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,7 +66,7 @@ bool_t wxr_get_gnd_sense(const wxr_t *wxr);
 
 void wxr_clear_screen(wxr_t *wxr);
 
-void wxr_set_colors(wxr_t *wxr, const uint32_t colors[4]);
+void wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num);
 
 #ifdef __cplusplus
 }

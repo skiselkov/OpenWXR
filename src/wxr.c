@@ -45,6 +45,8 @@
 #define	EARTH_CIRC	(2 * EARTH_MSL * M_PI)	/* meters */
 #define	MAX_TERR_LAT	85
 #define	GROUND_RETURN_MULT	0.2		/* energy multiplier */
+#define	SHADOW_ENERGY_THRESH	0.57
+#define	ENERGY_SCALE_FACT	0.04
 
 struct wxr_s {
 	const wxr_conf_t	*conf;
@@ -75,14 +77,14 @@ struct wxr_s {
 	geo_pos3_t		acf_pos;
 	vect3_t			acf_orient;
 	unsigned		cur_range;
-	bool_t			gnd_sense;
 	double			gain;
 	double			ant_pitch_req;
 	unsigned		azi_lim_left;
 	unsigned		azi_lim_right;
 	double			pitch_stab;
 	double			roll_stab;
-	uint32_t		colors[4];
+	const wxr_color_t *	colors;
+	size_t			num_colors;
 
 	/* only accessed from worker thread */
 	unsigned		ant_pos;
@@ -169,11 +171,12 @@ wxr_worker(void *userinfo)
 	wxr_t *wxr = userinfo;
 	double ant_pitch, acf_hdg, acf_pitch;
 	vect2_t degree_sz;
-	uint32_t colors[4];
 	double scan_time;
 	double sample_sz = wxr->sl.range / wxr->sl.num_samples;
 	double sample_sz_rat = sample_sz / 1000.0;
 	double extra_pitch = 0, extra_roll = 0;
+	size_t num_colors;
+	wxr_color_t *colors;
 
 #ifdef	WXR_PROFILE
 	uint64_t now = microclock();
@@ -203,7 +206,10 @@ wxr_worker(void *userinfo)
 		extra_roll = wxr->acf_orient.z - wxr->roll_stab;
 	else if (wxr->acf_orient.z < -wxr->roll_stab)
 		extra_roll = wxr->acf_orient.z + wxr->roll_stab;
-	memcpy(colors, wxr->colors, sizeof (colors));
+
+	num_colors = wxr->num_colors;
+	colors = calloc(sizeof (*colors), num_colors);
+	memcpy(colors, wxr->colors, sizeof (*colors) * num_colors);
 
 	mutex_exit(&wxr->lock);
 
@@ -328,7 +334,7 @@ wxr_worker(void *userinfo)
 
 			norm = randomize_normal(wxr->tp.out_norm[j]);
 			fract_dir = vect3_dotprod(back_v, norm);
-			fract_dir = MAX(fract_dir, 0);
+			fract_dir = clamp(fract_dir, 0, 1);
 
 			for (int k = 0; k < NUM_VERT_SECTORS; k++) {
 				/* How perpendicular is the ground to us */
@@ -352,7 +358,7 @@ wxr_worker(void *userinfo)
 				ground_return[k] = ((1 - energy_spent[k]) *
 				    fract_hit * (fract_dir + 0.8) /
 				    NUM_VERT_SECTORS) * GROUND_RETURN_MULT *
-				    (1 - wxr->tp.out_water[j] * 0.9);
+				    (1 - wxr->tp.out_water[j] * 0.89);
 			}
 
 			for (int k = 0; k < NUM_VERT_SECTORS; k++) {
@@ -361,30 +367,28 @@ wxr_worker(void *userinfo)
 				energy_spent[k] += energy[k] + ground_absorb[k];
 				energy_spent_total += energy_spent[k];
 			}
-			abs_energy = (abs_energy / sample_sz_rat) +
-			    ground_return_total;
+			abs_energy = ((abs_energy / sample_sz_rat) +
+			    ground_return_total) * wxr->gain;
 
-			if (energy_spent_total > 0.98 && wxr->beam_shadow) {
+			if (energy_spent_total / NUM_VERT_SECTORS >
+			    SHADOW_ENERGY_THRESH && wxr->beam_shadow) {
 				wxr->shadow_samples[off + j] =
 				    BE32(0x70707070u);
 			} else {
 				wxr->shadow_samples[off + j] = 0x00u;
 			}
-
-			if (wxr->gain * abs_energy >= 0.056 * 0.6)
-				wxr->samples[off + j] = colors[0];
-			else if (wxr->gain * abs_energy >= 0.084 / 2 * 0.6)
-				wxr->samples[off + j] = colors[1];
-			else if (wxr->gain * abs_energy >= 0.084 / 3 * 0.6)
-				wxr->samples[off + j] = colors[2];
-			else if (wxr->gain * abs_energy >= 0.084 / 4 * 0.6 ||
-			    (wxr->gnd_sense &&
-			    wxr->gain * abs_energy >= 0.084 / 20 * 0.6))
-				wxr->samples[off + j] = colors[3];
-			else
-				wxr->samples[off + j] = 0x00u;
+			wxr->samples[off + j] = 0x00u;
+			for (size_t k = 0; k < num_colors; k++) {
+				if (abs_energy / ENERGY_SCALE_FACT >=
+				    colors[k].min_val) {
+					wxr->samples[off + j] = colors[k].rgba;
+					break;
+				}
+			}
 		}
 	}
+
+	free(colors);
 
 #ifdef	WXR_PROFILE
 	end = microclock();
@@ -1018,24 +1022,12 @@ wxr_get_vert_mode(const wxr_t *wxr)
  * Colors should be in big-endian RGBA ('R' in top bits, 'A' in bottom bits).
  */
 void
-wxr_set_colors(wxr_t *wxr, const uint32_t colors[4])
+wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num)
 {
-	mutex_enter(&wxr->lock);
-	for (int i = 0; i < 4; i++)
-		wxr->colors[i] = colors[i];
-	mutex_exit(&wxr->lock);
-}
-
-void
-wxr_set_gnd_sense(wxr_t *wxr, bool_t flag)
-{
-	mutex_enter(&wxr->lock);
-	wxr->gnd_sense = flag;
-	mutex_exit(&wxr->lock);
-}
-
-bool_t
-wxr_get_gnd_sense(const wxr_t *wxr)
-{
-	return (wxr->gnd_sense);
+	if (colors != wxr->colors) {
+		mutex_enter(&wxr->lock);
+		wxr->colors = colors;
+		wxr->num_colors = num;
+		mutex_exit(&wxr->lock);
+	}
 }

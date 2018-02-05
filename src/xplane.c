@@ -74,9 +74,7 @@ static openwxr_intf_t openwxr_intf = {
 	.clear_screen = wxr_clear_screen,
 	.set_vert_mode = wxr_set_vert_mode,
 	.get_vert_mode = wxr_get_vert_mode,
-	.set_colors = wxr_set_colors,
-	.set_gnd_sense = wxr_set_gnd_sense,
-	.get_gnd_sense = wxr_get_gnd_sense
+	.set_colors = wxr_set_colors
 };
 
 PLUGIN_API int

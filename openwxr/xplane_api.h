@@ -31,6 +31,12 @@ typedef struct atmo_s atmo_t;
 typedef struct wxr_s wxr_t;
 
 typedef struct {
+	double		min_val;
+	double		max_val;
+	uint32_t	rgba;		/* Big-endian RGBA */
+} wxr_color_t;
+
+typedef struct {
 	wxr_t *(*init)(const wxr_conf_t *conf, const atmo_t *atmo);
 	void (*fini)(wxr_t *wxr);
 
@@ -53,9 +59,7 @@ typedef struct {
 	void (*clear_screen)(wxr_t *wxr);
 	void (*set_vert_mode)(wxr_t *wxr, bool_t flag, double azimuth);
 	bool_t (*get_vert_mode)(const wxr_t *wxr);
-	void (*set_colors)(wxr_t *wxr, const uint32_t colors[4]);
-	void (*set_gnd_sense)(wxr_t *wxr, bool_t flag);
-	bool_t (*get_gnd_sense)(const wxr_t *wxr);
+	void (*set_colors)(wxr_t *wxr, const wxr_color_t *colors, size_t num);
 } openwxr_intf_t;
 
 typedef enum {
