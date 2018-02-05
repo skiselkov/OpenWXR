@@ -111,6 +111,58 @@ randomize_normal(vect3_t norm)
 	return (VECT3(norm.x * rx, norm.y * ry, norm.z * rz));
 }
 
+static void
+advance_ant_pos(wxr_t *wxr)
+{
+	/*
+	 * Move the antenna by one notch left/right (or up/down
+	 * when in vertical mode).
+	 */
+	if (wxr->scan_right) {
+		if (!wxr->vert_mode)
+			wxr->ant_pos++;
+		else
+			wxr->ant_pos_vert++;
+		if ((!wxr->vert_mode && (wxr->ant_pos == wxr->conf->res_x - 1 ||
+		    wxr->ant_pos >= wxr->azi_lim_right)) || (wxr->vert_mode &&
+		    wxr->ant_pos_vert == wxr->conf->res_x - 1))
+			wxr->scan_right = B_FALSE;
+	} else {
+		if (!wxr->vert_mode)
+			wxr->ant_pos--;
+		else
+			wxr->ant_pos_vert--;
+		if ((!wxr->vert_mode &&
+		    (wxr->ant_pos == 0 || wxr->ant_pos <= wxr->azi_lim_left)) ||
+		    (wxr->vert_mode && wxr->ant_pos_vert == 0))
+			wxr->scan_right = B_TRUE;
+	}
+}
+
+static void
+prep_terr_probe_coords(wxr_t *wxr, vect2_t ant_dir, vect2_t degree_sz)
+{
+	for (unsigned i = 0; i < wxr->conf->res_y; i++) {
+		double d = ((double)i / wxr->conf->res_y) * wxr->sl.range;
+		vect2_t disp_m = vect2_scmul(ant_dir, d);
+		vect2_t disp_deg = VECT2(disp_m.x / degree_sz.x,
+		    disp_m.y / degree_sz.y);
+		geo_pos2_t p = GEO_POS2(wxr->sl.origin.lat + disp_deg.y,
+		    wxr->sl.origin.lon + disp_deg.x);
+		/*
+		 * Handle geo coordinate wrapping.
+		 */
+		p.lat = clamp(p.lat, -MAX_TERR_LAT, MAX_TERR_LAT);
+		if (p.lon <= -180.0)
+			p.lon += 360;
+		else if (p.lon >= 180.0)
+			p.lon -= 360.0;
+		ASSERT(is_valid_lat(p.lat));
+		ASSERT(is_valid_lon(p.lon));
+		wxr->tp.in_pts[i] = p;
+	}
+}
+
 static bool_t
 wxr_worker(void *userinfo)
 {
@@ -121,6 +173,7 @@ wxr_worker(void *userinfo)
 	double scan_time;
 	double sample_sz = wxr->sl.range / wxr->sl.num_samples;
 	double sample_sz_rat = sample_sz / 1000.0;
+	double extra_pitch = 0, extra_roll = 0;
 
 #ifdef	WXR_PROFILE
 	uint64_t now = microclock();
@@ -142,6 +195,14 @@ wxr_worker(void *userinfo)
 	ant_pitch = wxr->ant_pitch_req;
 	acf_hdg = wxr->acf_orient.y;
 	acf_pitch = wxr->acf_orient.x;
+	if (acf_pitch > wxr->pitch_stab)
+		extra_pitch = acf_pitch - wxr->pitch_stab;
+	else if (acf_pitch < -wxr->pitch_stab)
+		extra_pitch = wxr->pitch_stab + acf_pitch;
+	if (wxr->acf_orient.z > wxr->roll_stab)
+		extra_roll = wxr->acf_orient.z - wxr->roll_stab;
+	else if (wxr->acf_orient.z < -wxr->roll_stab)
+		extra_roll = wxr->acf_orient.z + wxr->roll_stab;
 	memcpy(colors, wxr->colors, sizeof (colors));
 
 	mutex_exit(&wxr->lock);
@@ -196,47 +257,26 @@ wxr_worker(void *userinfo)
 		double sin_ant_pitch[NUM_VERT_SECTORS + 1];
 
 		memset(energy_spent, 0, sizeof (energy_spent));
-		/*
-		 * Move the antenna by one notch left/right (or up/down
-		 * when in vertical mode).
-		 */
-		if (wxr->scan_right) {
-			if (!wxr->vert_mode)
-				wxr->ant_pos++;
-			else
-				wxr->ant_pos_vert++;
-			if ((!wxr->vert_mode &&
-			    (wxr->ant_pos == wxr->conf->res_x - 1 ||
-			    wxr->ant_pos >= wxr->azi_lim_right)) ||
-			    (wxr->vert_mode &&
-			    wxr->ant_pos_vert == wxr->conf->res_x - 1))
-				wxr->scan_right = B_FALSE;
-		} else {
-			if (!wxr->vert_mode)
-				wxr->ant_pos--;
-			else
-				wxr->ant_pos_vert--;
-			if ((!wxr->vert_mode && (wxr->ant_pos == 0 ||
-			    wxr->ant_pos <= wxr->azi_lim_left)) ||
-			    (wxr->vert_mode && wxr->ant_pos_vert == 0))
-				wxr->scan_right = B_TRUE;
-		}
+
+		advance_ant_pos(wxr);
 		if (!wxr->vert_mode)
 			off = wxr->ant_pos * wxr->conf->res_y;
 		else
 			off = wxr->ant_pos_vert * wxr->conf->res_y;
 
 		wxr->sl.ant_rhdg = (wxr->conf->scan_angle *
-		    ((wxr->ant_pos / (double)wxr->conf->res_x) - 0.5));
+		    ((wxr->ant_pos / (double)wxr->conf->res_x) - 0.5)) *
+		    cos(DEG2RAD(extra_roll));
 		ant_hdg = acf_hdg + wxr->sl.ant_rhdg;
 		if (wxr->vert_mode) {
 			UNUSED(acf_pitch);
-			ant_pitch = /*acf_pitch - */
+			ant_pitch =
 			    -(wxr->conf->scan_angle_vert *
 			    ((wxr->ant_pos_vert / (double)wxr->conf->res_x) -
 			    0.5));
 			ant_pitch = clamp(ant_pitch, -90, 90);
 		}
+		ant_pitch += extra_pitch;
 		wxr->sl.dir = VECT2(ant_hdg, ant_pitch);
 		ant_pitch_up_down = ant_pitch;
 		wxr->sl.vert_scan = wxr->vert_mode;
@@ -251,26 +291,7 @@ wxr_worker(void *userinfo)
 			    (wxr->conf->beam_shape.y / NUM_VERT_SECTORS) * j;
 			sin_ant_pitch[j] = sin(DEG2RAD(angle));
 		}
-		for (unsigned j = 0; j < wxr->conf->res_y; j++) {
-			double d = ((double)j / wxr->conf->res_y) *
-			    wxr->sl.range;
-			vect2_t disp_m = vect2_scmul(ant_dir, d);
-			vect2_t disp_deg = VECT2(disp_m.x / degree_sz.x,
-			    disp_m.y / degree_sz.y);
-			geo_pos2_t p = GEO_POS2(wxr->sl.origin.lat + disp_deg.y,
-			    wxr->sl.origin.lon + disp_deg.x);
-			/*
-			 * Handle geo coordinate wrapping.
-			 */
-			p.lat = clamp(p.lat, -MAX_TERR_LAT, MAX_TERR_LAT);
-			if (p.lon <= -180.0)
-				p.lon += 360;
-			else if (p.lon >= 180.0)
-				p.lon -= 360.0;
-			ASSERT(is_valid_lat(p.lat));
-			ASSERT(is_valid_lon(p.lon));
-			wxr->tp.in_pts[j] = p;
-		}
+		prep_terr_probe_coords(wxr, ant_dir, degree_sz);
 		wxr->terr->terr_probe(&wxr->tp);
 
 		/*
