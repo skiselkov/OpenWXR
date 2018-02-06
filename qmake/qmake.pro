@@ -30,6 +30,7 @@ INCLUDEPATH += $$[LIBACFUTILS]/OpenAL/include
 INCLUDEPATH += $$[LIBACFUTILS]/src
 INCLUDEPATH += $$[LIBACFUTILS]/acf_apis
 INCLUDEPATH += $$[LIBACFUTILS]/glew
+INCLUDEPATH += $$[OPENGPWS]
 
 # Needed for openwxr/xplane_api.h
 INCLUDEPATH += ..
