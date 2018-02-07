@@ -969,20 +969,26 @@ wxr_get_standby(const wxr_t *wxr)
 void
 wxr_clear_screen(wxr_t *wxr)
 {
-	mutex_enter(&wxr->wk.lock);
+	if (!wxr->standby)
+		mutex_enter(&wxr->wk.lock);
+
 	mutex_enter(&wxr->lock);
 	memset(wxr->samples, 0,
 	    sizeof (*wxr->samples) * wxr->conf->res_x * wxr->conf->res_y);
 	memset(wxr->shadow_samples, 0,
 	    sizeof (*wxr->samples) * wxr->conf->res_x * wxr->conf->res_y);
 	mutex_exit(&wxr->lock);
-	mutex_exit(&wxr->wk.lock);
+
+	if (!wxr->standby)
+		mutex_exit(&wxr->wk.lock);
 }
 
 void
 wxr_set_vert_mode(wxr_t *wxr, bool_t flag, double azimuth)
 {
-	mutex_enter(&wxr->wk.lock);
+	if (!wxr->standby)
+		mutex_enter(&wxr->wk.lock);
+
 	mutex_enter(&wxr->lock);
 
 	ASSERT3F(ABS(azimuth), <=, wxr->conf->scan_angle / 2);
@@ -1009,7 +1015,9 @@ wxr_set_vert_mode(wxr_t *wxr, bool_t flag, double azimuth)
 	}
 
 	mutex_exit(&wxr->lock);
-	mutex_exit(&wxr->wk.lock);
+
+	if (!wxr->standby)
+		mutex_exit(&wxr->wk.lock);
 }
 
 bool_t
