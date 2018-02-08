@@ -455,7 +455,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 		    &wxr->terr);
 	}
 
-	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
+	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr, "OpenWXR-worker");
 
 	return (wxr);
 }
@@ -955,7 +955,8 @@ wxr_set_standby(wxr_t *wxr, bool_t flag)
 			memset(wxr->shadow_samples, 0, sizeof (*wxr->samples) *
 			    wxr->conf->res_x * wxr->conf->res_y);
 		} else {
-			worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr);
+			worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr,
+			    "OpenWXR-worker");
 		}
 	}
 }
