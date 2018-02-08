@@ -169,7 +169,7 @@ static bool_t
 wxr_worker(void *userinfo)
 {
 	wxr_t *wxr = userinfo;
-	double ant_pitch, acf_hdg, acf_pitch;
+	double ant_pitch_base, acf_hdg, acf_pitch;
 	vect2_t degree_sz;
 	double scan_time;
 	double sample_sz = wxr->sl.range / wxr->sl.num_samples;
@@ -195,7 +195,7 @@ wxr_worker(void *userinfo)
 	wxr->sl.energy = MAX_BEAM_ENERGY;
 	wxr->sl.max_range = wxr->conf->ranges[wxr->conf->num_ranges - 1];
 	wxr->sl.num_samples = wxr->conf->res_y;
-	ant_pitch = wxr->ant_pitch_req;
+	ant_pitch_base = wxr->ant_pitch_req;
 	acf_hdg = wxr->acf_orient.y;
 	acf_pitch = wxr->acf_orient.x;
 	if (acf_pitch > wxr->pitch_stab)
@@ -261,7 +261,10 @@ wxr_worker(void *userinfo)
 		double energy_spent[NUM_VERT_SECTORS];
 		vect2_t ant_dir, ant_dir_neg;
 		double sin_ant_pitch[NUM_VERT_SECTORS + 1];
+		double ant_pitch = ant_pitch_base;
+		double cos_ant_pitch;
 
+		CTASSERT(NUM_VERT_SECTORS > 1);
 		memset(energy_spent, 0, sizeof (energy_spent));
 
 		advance_ant_pos(wxr);
@@ -285,6 +288,7 @@ wxr_worker(void *userinfo)
 		ant_pitch += extra_pitch;
 		wxr->sl.dir = VECT2(ant_hdg, ant_pitch);
 		ant_pitch_up_down = ant_pitch;
+		cos_ant_pitch = cos(DEG2RAD(ant_pitch));
 		wxr->sl.vert_scan = wxr->vert_mode;
 
 		wxr->atmo->probe(&wxr->sl);
@@ -310,7 +314,7 @@ wxr_worker(void *userinfo)
 			double energy_spent_total = 0;
 			/* Distance of point along scan line from antenna. */
 			double d = ((double)j / wxr->conf->res_y) *
-			    wxr->sl.range;
+			    wxr->sl.range * cos_ant_pitch;
 			int64_t elev_rand_lim = iter_fract(d, 0, 100000,
 			    B_TRUE) * 3000 + 10;
 			int64_t elev_rand = (crc64_rand() % elev_rand_lim) -
@@ -349,7 +353,20 @@ wxr_worker(void *userinfo)
 				elev_min = wxr->sl.origin.elev +
 				    sin_ant_pitch[k] * d;
 				elev_max = wxr->sl.origin.elev +
-				    sin_ant_pitch[k + 1] * d + 1;
+				    sin_ant_pitch[k + 1] * d;
+				/*
+				 * At extreme antenna angles, the top/bottom
+				 * distinction can break, so to avoid that, we
+				 * manually flip the coordinates in this case
+				 * and add 0.1m to elev_max to guarantee that
+				 * it cannot be <= elev_min.
+				 */
+				if (elev_min > elev_max) {
+					double tmp = elev_max;
+					elev_max = elev_min;
+					elev_min = tmp;
+				}
+				elev_max += 0.1;
 				fract_hit = iter_fract(terr_elev, elev_min,
 				    elev_max, B_FALSE) / 5;
 				fract_hit = clamp(fract_hit, 0, 1);
