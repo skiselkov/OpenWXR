@@ -23,7 +23,7 @@
 # Locate libacfutils and build it if necessary
 LIBACFUTILS="$(qmake -query LIBACFUTILS)"
 HOST_OS="$(uname)"
-
+STRIP="strip"
 
 # We'll try to build on N+1 CPUs we have available. The extra +1 is to allow
 # for one make instance to be blocking on disk.
@@ -81,6 +81,10 @@ else
 	if [ $? != 0 ] ; then
 		exit
 	fi
+
+	$STRIP --keep-symbol=XPluginStart --keep-symbol=XPluginStop \
+	    --keep-symbol=XPluginEnable --keep-symbol=XPluginDisable \
+	    --keep-symbol=XPluginReceiveMessage "$output_dir/win.xpl"
 fi
 
 make distclean > /dev/null
