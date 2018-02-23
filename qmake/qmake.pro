@@ -78,7 +78,7 @@ win32:contains(CROSS_COMPILE, x86_64-w64-mingw32-) {
 	    --cflags")
 
 	# This must go first for GCC to properly find dependent symbols
-	LIBS += -Wl,--whole-archive $$[LIBACFUTILS]/qmake/win64/libacfutils.a
+	LIBS += $$[LIBACFUTILS]/qmake/win64/libacfutils.a
 	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps win-64 --libs")
 
 	LIBS += -L$$[LIBACFUTILS]/SDK/Libraries/Win -lXPLM_64
@@ -93,7 +93,7 @@ win32:contains(CROSS_COMPILE, i686-w64-mingw32-) {
 	QMAKE_CFLAGS += $$system("$$[LIBACFUTILS]/pkg-config-deps win-32 \
 	    --cflags")
 
-	LIBS += -Wl,--whole-archive $$[LIBACFUTILS]/qmake/win32/libacfutils.a
+	LIBS += $$[LIBACFUTILS]/qmake/win32/libacfutils.a
 	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps win-32 --libs")
 
 	LIBS += -L$$[LIBACFUTILS]/SDK/Libraries/Win -lXPLM
