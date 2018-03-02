@@ -30,10 +30,10 @@ INCLUDEPATH += $$[LIBACFUTILS]/OpenAL/include
 INCLUDEPATH += $$[LIBACFUTILS]/src
 INCLUDEPATH += $$[LIBACFUTILS]/acf_apis
 INCLUDEPATH += $$[LIBACFUTILS]/glew
-INCLUDEPATH += $$[OPENGPWS]
+INCLUDEPATH += $$[OPENGPWS]/api
 
 # Needed for openwxr/xplane_api.h
-INCLUDEPATH += ..
+INCLUDEPATH += ../api
 
 QMAKE_CFLAGS += -O2 -std=c99 -g -W -Wall -Wextra -Werror -fvisibility=hidden \
     -Wno-unused-local-typedefs -Wunused-result
@@ -89,21 +89,6 @@ win32:contains(CROSS_COMPILE, x86_64-w64-mingw32-) {
 	LIBS += -ldbghelp
 }
 
-win32:contains(CROSS_COMPILE, i686-w64-mingw32-) {
-	QMAKE_CFLAGS += $$system("$$[LIBACFUTILS]/pkg-config-deps win-32 \
-	    --cflags")
-
-	LIBS += $$[LIBACFUTILS]/qmake/win32/libacfutils.a
-	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps win-32 --libs")
-
-	LIBS += -L$$[LIBACFUTILS]/SDK/Libraries/Win -lXPLM
-	LIBS += -L$$[LIBACFUTILS]/SDK/Libraries/Win -lXPWidgets
-	LIBS += -L$$[LIBACFUTILS]/OpenAL/libs/Win32 -lOpenAL32
-	LIBS += -L$$[LIBACFUTILS]/GL_for_Windows/lib -lglu32 -lopengl32
-
-	LIBS += -ldbghelp
-}
-
 unix:!macx {
 	DEFINES += APL=0 IBM=0 LIN=1
 	TARGET = lin.xpl
@@ -120,26 +105,11 @@ linux-g++-64 {
 	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps linux-64 --libs")
 }
 
-linux-g++-32 {
-	QMAKE_CFLAGS += $$system("$$[LIBACFUTILS]/pkg-config-deps linux-32 \
-	    --cflags")
-
-	# The stack protector forces us to depend on libc,
-	# but we'd prefer to be static.
-	QMAKE_CFLAGS += -fno-stack-protector
-	LIBS += -fno-stack-protector
-
-	LIBS += -L$$[LIBACFUTILS]/qmake/lin32 -lacfutils
-	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps linux-32 --libs")
-
-	LIBS += -lssp_nonshared
-}
-
 macx {
 	# Prevent linking via clang++ which makes us depend on libstdc++
 	QMAKE_LINK = $$QMAKE_CC
-	QMAKE_CFLAGS += -mmacosx-version-min=10.7
-	QMAKE_LFLAGS += -mmacosx-version-min=10.7
+	QMAKE_CFLAGS += -mmacosx-version-min=10.9
+	QMAKE_LFLAGS += -mmacosx-version-min=10.9
 
 	DEFINES += APL=1 IBM=0 LIN=0
 	TARGET = mac.xpl
@@ -152,33 +122,9 @@ macx {
 macx-clang {
 	QMAKE_CFLAGS += $$system("$$[LIBACFUTILS]/pkg-config-deps mac-64 \
 	    --cflags")
-	QMAKE_CFLAGS += $$system("PKG_CONFIG_PATH=../pcre2/pcre2-mac-64 \
-	    pkg-config --cflags libpcre2-8")
-	QMAKE_CFLAGS += $$system("PKG_CONFIG_PATH=../libxml2/libxml2-mac-64 \
-	    pkg-config --cflags libxml-2.0")
 
 	LIBS += $$[LIBACFUTILS]/qmake/mac64/libacfutils.a
 	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps mac-64 --libs")
-
-	LIBS += $$system("PKG_CONFIG_PATH=../pcre2/pcre2-mac-64 pkg-config \
-	    --libs libpcre2-8")
-	LIBS += "../libxml2/libxml2-mac-64/.libs/libxml2.a"
-}
-
-macx-clang-32 {
-	QMAKE_CFLAGS += $$system("$$[LIBACFUTILS]/pkg-config-deps mac-32 \
-	    --cflags")
-	QMAKE_CFLAGS += $$system("PKG_CONFIG_PATH=../pcre2/pcre2-mac-32 \
-	    pkg-config --cflags libpcre2-8")
-	QMAKE_CFLAGS += $$system("PKG_CONFIG_PATH=../libxml2/libxml2-mac-32 \
-	    pkg-config --cflags libxml-2.0")
-
-	LIBS += $$[LIBACFUTILS]/qmake/mac32/libacfutils.a
-	LIBS += $$system("$$[LIBACFUTILS]/pkg-config-deps mac-32 --libs")
-
-	LIBS += $$system("PKG_CONFIG_PATH=../pcre2/pcre2-mac-32 pkg-config \
-	    --libs libpcre2-8")
-	LIBS += "../libxml2/libxml2-mac-32/.libs/libxml2.a"
 }
 
 HEADERS += ../src/*.h

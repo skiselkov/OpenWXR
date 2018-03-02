@@ -483,11 +483,11 @@ wxr_fini(wxr_t *wxr)
 	if (!wxr->standby)
 		worker_fini(&wxr->wk);
 
-	if (wxr->tex != 0)
+	if (wxr->tex[0] != 0)
 		glDeleteTextures(2, wxr->tex);
 	if (wxr->pbo != 0)
 		glDeleteBuffers(1, &wxr->pbo);
-	if (wxr->shadow_tex != 0)
+	if (wxr->shadow_tex[0] != 0)
 		glDeleteTextures(2, wxr->shadow_tex);
 	if (wxr->shadow_pbo != 0)
 		glDeleteBuffers(1, &wxr->shadow_pbo);

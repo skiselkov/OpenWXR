@@ -21,6 +21,8 @@
 
 #include <acfutils/geom.h>
 
+#include <openwxr/xplane_api.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,10 +41,10 @@ typedef struct {
 	double		*doppler_out;	/* freq shift, relative motion, m/s */
 } scan_line_t;
 
-typedef struct atmo_s {
+struct atmo_s {
 	void		(*set_range)(double rng);
 	void		(*probe)(scan_line_t *sl);
-} atmo_t;
+};
 
 #ifdef __cplusplus
 }

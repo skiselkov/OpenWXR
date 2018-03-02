@@ -22,14 +22,12 @@
 #include <acfutils/geom.h>
 
 #include "atmo.h"
-#include "../openwxr/wxr_intf.h"
-#include "../openwxr/xplane_api.h"
+#include <openwxr/wxr_intf.h>
+#include <openwxr/xplane_api.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef struct wxr_s wxr_t;
 
 wxr_t *wxr_init(const wxr_conf_t *conf, const atmo_t *atmo);
 void wxr_fini(wxr_t *wxr);

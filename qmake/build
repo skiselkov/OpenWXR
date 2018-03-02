@@ -25,19 +25,6 @@ LIBACFUTILS="$(qmake -query LIBACFUTILS)"
 HOST_OS="$(uname)"
 STRIP="strip"
 
-# We'll try to build on N+1 CPUs we have available. The extra +1 is to allow
-# for one make instance to be blocking on disk.
-if [[ "$HOST_OS" = "Darwin" ]]; then
-	LIBACF_BLD_CMD="./build-mac"
-	NCPUS=$(( $(sysctl -n hw.ncpu) + 1 ))
-	LIBACF_TEST_FILE="$LIBACFUTILS/qmake/mac64/libacfutils.a"
-else
-	LIBACF_BLD_CMD="./build-win-lin"
-	NCPUS=$(( $(grep 'processor[[:space:]]\+:' /proc/cpuinfo  | wc -l) + \
-	    1 ))
-	LIBACF_TEST_FILE="$LIBACFUTILS/qmake/lin64/libacfutils.a"
-fi
-
 release_dir="debug"
 output_dir="output/64"
 
@@ -47,12 +34,6 @@ if [ "$LIBACFUTILS" = "**Unknown**" ]; then
 	exit 1
 fi
 
-if ! [ -f "$LIBACF_TEST_FILE" ]; then
-	if ! ( cd "$LIBACFUTILS/qmake" && "$LIBACF_BLD_CMD" ) ; then
-		exit 1
-	fi
-fi
-
 rm -rf "$release_dir" "$output_dir"
 mkdir -p "$release_dir" "$output_dir"
 
@@ -60,6 +41,7 @@ if [[ "$HOST_OS" = "Darwin" ]]; then
 	make distclean > /dev/null
 	qmake -spec macx-clang && \
 	    make -j $NCPUS &&
+	    mv libmac.xpl.dylib "$output_dir/mac.xpl"
 	if [ $? != 0 ] ; then
 		exit
 	fi

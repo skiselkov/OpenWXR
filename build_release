@@ -1,7 +1,14 @@
 #!/bin/bash
 
 OUTPUT_DIR="OpenWXR"
-INSTALL="install -D -m 644"
+case $(uname) in
+Darwin)
+	INSTALL="ginstall -D -m 644"
+	;;
+*)
+	INSTALL="install -D -m 644"
+	;;
+esac
 
 set -e
 
@@ -24,8 +31,8 @@ find data -iname '*.opus' -or -iname '*.glsl' | while read; do
 	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
 done
 
-$INSTALL -- "openwxr/xplane_api.h" "$OUTPUT_DIR/openwxr/xplane_api.h"
-$INSTALL -- "openwxr/wxr_intf.h" "$OUTPUT_DIR/openwxr/wxr_intf.h"
+$INSTALL -- "api/openwxr/xplane_api.h" "$OUTPUT_DIR/openwxr/xplane_api.h"
+$INSTALL -- "api/openwxr/wxr_intf.h" "$OUTPUT_DIR/openwxr/wxr_intf.h"
 
 # ZIP up the product
 zip -r "$OUTPUT_DIR.zip" "$OUTPUT_DIR"

@@ -38,7 +38,7 @@
 
 #include "atmo_xp11.h"
 #include "dbg_log.h"
-#include "../openwxr/xplane_api.h"
+#include <openwxr/xplane_api.h>
 #include "wxr.h"
 
 #define	PLUGIN_NAME		"OpenWXR by Saso Kiselkov"
