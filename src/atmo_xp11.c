@@ -430,8 +430,9 @@ setup_opengl(void)
 		glGenFramebuffers(3, xp11_atmo.tmp_fbo);
 		for (int i = 0; i < 3; i++) {
 			glBindFramebuffer(GL_FRAMEBUFFER, xp11_atmo.tmp_fbo[i]);
-			glFramebufferTexture(GL_FRAMEBUFFER,
-			    GL_COLOR_ATTACHMENT0, xp11_atmo.tmp_tex[i], 0);
+			glFramebufferTexture2D(GL_FRAMEBUFFER,
+			    GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+			    xp11_atmo.tmp_tex[i], 0);
 			VERIFY3U(glCheckFramebufferStatus(GL_FRAMEBUFFER), ==,
 			    GL_FRAMEBUFFER_COMPLETE);
 		}
