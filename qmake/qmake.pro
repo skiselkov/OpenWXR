@@ -18,7 +18,7 @@ TEMPLATE = lib
 QT -= gui core
 
 CONFIG += plugin debug
-CONFIG -= thread exceptions qt rtti
+CONFIG -= thread exceptions qt rtti release
 
 VERSION = 1.0.0
 
@@ -71,6 +71,7 @@ win32 {
 	TARGET = win.xpl
 	QMAKE_DEL_FILE = rm -f
 	LIBS += -Wl,--exclude-libs,ALL
+	QMAKE_LFLAGS_RELEASE =
 }
 
 win32:contains(CROSS_COMPILE, x86_64-w64-mingw32-) {

@@ -18,12 +18,14 @@ mkdir -p "$OUTPUT_DIR"
 ( cd qmake && ./build ) || exit 1
 
 if [[ $(uname) = "Linux" ]]; then
-	$INSTALL -- "qmake/output/64/lin.xpl" \
+	$INSTALL -- "qmake/output/lin_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/lin_x64/${OUTPUT_DIR}.xpl"
-	$INSTALL -- "qmake/output/64/win.xpl" \
+	$INSTALL -- "qmake/output/win_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/win_x64/${OUTPUT_DIR}.xpl"
+	$INSTALL -- "qmake/output/win_x64/syms.txt" \
+	    "$OUTPUT_DIR/win_x64/syms.txt"
 else
-	$INSTALL -- "qmake/output/64/mac.xpl" \
+	$INSTALL -- "qmake/output/mac_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/mac_x64/${OUTPUT_DIR}.xpl"
 fi
 

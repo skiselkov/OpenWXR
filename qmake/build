@@ -26,7 +26,7 @@ HOST_OS="$(uname)"
 STRIP="strip"
 
 release_dir="debug"
-output_dir="output/64"
+output_dir="output"
 
 if [ "$LIBACFUTILS" = "**Unknown**" ]; then
 	echo "Please use \"qmake -set LIBACFUTILS <<path>>\" to " \
@@ -35,13 +35,13 @@ if [ "$LIBACFUTILS" = "**Unknown**" ]; then
 fi
 
 rm -rf "$release_dir" "$output_dir"
-mkdir -p "$release_dir" "$output_dir"
+mkdir -p "$release_dir" "$output_dir"/{win,mac,lin}_x64
 
 if [[ "$HOST_OS" = "Darwin" ]]; then
 	make distclean > /dev/null
 	qmake -spec macx-clang && \
 	    make -j $NCPUS &&
-	    mv libmac.xpl.dylib "$output_dir/mac.xpl"
+	    mv libmac.xpl.dylib "$output_dir/mac_x64/OpenWXR.xpl"
 	if [ $? != 0 ] ; then
 		exit
 	fi
@@ -50,7 +50,10 @@ else
 	qmake -set CROSS_COMPILE x86_64-w64-mingw32- && \
 	    qmake -spec win32-g++ && \
 	    make -j $NCPUS && \
-	    mv "$release_dir/win.xpl1.dll" "$output_dir/win.xpl"
+	    mv "$release_dir/win.xpl1.dll" "$output_dir/win_x64/OpenWXR.xpl" \
+	    && \
+	    "$LIBACFUTILS/tools/mksyms" "$output_dir/win_x64/OpenWXR.xpl" > \
+	    "$output_dir/win_x64/syms.txt"
 	if [ $? != 0 ] ; then
 		exit
 	fi
@@ -59,14 +62,10 @@ else
 
 	qmake -spec linux-g++-64 && \
 	    make -j $NCPUS && \
-	    mv liblin.xpl.so "$output_dir/lin.xpl"
+	    mv liblin.xpl.so "$output_dir/lin_x64/OpenWXR.xpl"
 	if [ $? != 0 ] ; then
 		exit
 	fi
-
-	$STRIP --keep-symbol=XPluginStart --keep-symbol=XPluginStop \
-	    --keep-symbol=XPluginEnable --keep-symbol=XPluginDisable \
-	    --keep-symbol=XPluginReceiveMessage "$output_dir/win.xpl"
 fi
 
 make distclean > /dev/null
