@@ -31,6 +31,7 @@
 #include <acfutils/helpers.h>
 #include <acfutils/math.h>
 #include <acfutils/perf.h>
+#include <acfutils/safe_alloc.h>
 #include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
@@ -208,7 +209,7 @@ wxr_worker(void *userinfo)
 		extra_roll = wxr->acf_orient.z + wxr->roll_stab;
 
 	num_colors = wxr->num_colors;
-	colors = calloc(sizeof (*colors), num_colors);
+	colors = safe_calloc(sizeof (*colors), num_colors);
 	memcpy(colors, wxr->colors, sizeof (*colors) * num_colors);
 
 	mutex_exit(&wxr->lock);
@@ -231,13 +232,13 @@ wxr_worker(void *userinfo)
 	 */
 	if (wxr->tp.in_pts == NULL) {
 		wxr->tp.num_pts = wxr->conf->res_y;
-		wxr->tp.in_pts = calloc(wxr->tp.num_pts,
+		wxr->tp.in_pts = safe_calloc(wxr->tp.num_pts,
 		    sizeof (*wxr->tp.in_pts));
-		wxr->tp.out_elev = calloc(wxr->tp.num_pts,
+		wxr->tp.out_elev = safe_calloc(wxr->tp.num_pts,
 		    sizeof (*wxr->tp.out_elev));
-		wxr->tp.out_norm = calloc(wxr->tp.num_pts,
+		wxr->tp.out_norm = safe_calloc(wxr->tp.num_pts,
 		    sizeof (*wxr->tp.out_norm));
-		wxr->tp.out_water = calloc(wxr->tp.num_pts,
+		wxr->tp.out_water = safe_calloc(wxr->tp.num_pts,
 		    sizeof (*wxr->tp.out_water));
 	}
 
@@ -425,7 +426,7 @@ wxr_t *
 wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 {
 	char *vtx, *frag;
-	wxr_t *wxr = calloc(1, sizeof (*wxr));
+	wxr_t *wxr = safe_calloc(1, sizeof (*wxr));
 
 	ASSERT(conf->num_ranges != 0);
 	ASSERT3U(conf->num_ranges, <, WXR_MAX_RANGES);
@@ -448,14 +449,14 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	 */
 	wxr->draw_num_coords = 4 * 2 * ceil(conf->scan_angle);
 	wxr->draw_num_coords_vert = 4 * 2 * ceil(conf->scan_angle_vert);
-	wxr->samples = calloc(conf->res_x * conf->res_y,
+	wxr->samples = safe_calloc(conf->res_x * conf->res_y,
 	    sizeof (*wxr->samples));
-	wxr->shadow_samples = calloc(conf->res_x * conf->res_y,
+	wxr->shadow_samples = safe_calloc(conf->res_x * conf->res_y,
 	    sizeof (*wxr->samples));
 	wxr->ant_pos = conf->res_x / 2;
 	wxr->azi_lim_right = conf->res_x - 1;
-	wxr->sl.energy_out = calloc(wxr->conf->res_y, sizeof (double));
-	wxr->sl.doppler_out = calloc(wxr->conf->res_y, sizeof (double));
+	wxr->sl.energy_out = safe_calloc(wxr->conf->res_y, sizeof (double));
+	wxr->sl.doppler_out = safe_calloc(wxr->conf->res_y, sizeof (double));
 	wxr->atmo->set_range(wxr->conf->ranges[0]);
 
 	vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
@@ -773,9 +774,9 @@ wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size, bool_t vert)
 	    wxr->draw_num_coords_vert;
 
 	if (wxr->draw_vtx_coords == NULL) {
-		wxr->draw_vtx_coords = calloc(wxr->draw_num_coords,
+		wxr->draw_vtx_coords = safe_calloc(wxr->draw_num_coords,
 		    sizeof (*wxr->draw_vtx_coords));
-		wxr->draw_tex_coords = calloc(wxr->draw_num_coords,
+		wxr->draw_tex_coords = safe_calloc(wxr->draw_num_coords,
 		    sizeof (*wxr->draw_tex_coords));
 	}
 

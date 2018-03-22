@@ -19,6 +19,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <acfutils/safe_alloc.h>
+
 #include "dbg_log.h"
 
 dbg_level_t dbg_level = { .all = -1 };
@@ -46,7 +48,7 @@ dbg_log_impl(const char *dbg_class, int level, const char *fmt, ...)
 	va_start(ap, fmt);
 	len = vsnprintf(NULL, 0, fmt, ap);
 	va_end(ap);
-	msg = malloc(len + 1);
+	msg = safe_malloc(len + 1);
 	va_start(ap, fmt);
 	vsnprintf(msg, len + 1, fmt, ap);
 	va_end(ap);

@@ -31,6 +31,7 @@
 #include <acfutils/math.h>
 #include <acfutils/perf.h>
 #include <acfutils/png.h>
+#include <acfutils/safe_alloc.h>
 #include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
@@ -548,7 +549,7 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 	if (xp11_atmo.pixels == NULL) {
 		if (xp11_atmo.efis_w == 0 || xp11_atmo.efis_h == 0)
 			goto out;
-		xp11_atmo.pixels = calloc(EFIS_WIDTH * EFIS_HEIGHT,
+		xp11_atmo.pixels = safe_calloc(EFIS_WIDTH * EFIS_HEIGHT,
 		    sizeof (*xp11_atmo.pixels));
 	}
 
