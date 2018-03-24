@@ -645,11 +645,11 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 		xp11_atmo.precip_nodes[i] = VECT2(i, 0);
 	xp11_atmo.precip_nodes[4] = NULL_VECT2;
 
-	path = mkpathname(xpdir, plugindir, "data", "cleanup.glsl", NULL);
+	path = mkpathname(xpdir, plugindir, "data", "cleanup.frag", NULL);
 	xp11_atmo.cleanup_prog = shader_prog_from_file("cleanup", NULL, path);
 	lacf_free(path);
 
-	path = mkpathname(xpdir, plugindir, "data", "smooth.glsl", NULL);
+	path = mkpathname(xpdir, plugindir, "data", "smooth.frag", NULL);
 	xp11_atmo.smooth_prog = shader_prog_from_file("smooth", NULL, path);
 	lacf_free(path);
 

@@ -44,7 +44,7 @@
 #define	WORKER_INTVAL	33333			/* us, 30 fps */
 #define	MAX_BEAM_ENERGY	1			/* dBmW */
 #define	EARTH_CIRC	(2 * EARTH_MSL * M_PI)	/* meters */
-#define	MAX_TERR_LAT	85
+#define	MAX_TERR_LAT	79
 #define	GROUND_RETURN_MULT	0.2		/* energy multiplier */
 #define	SHADOW_ENERGY_THRESH	0.57
 #define	ENERGY_SCALE_FACT	0.04
@@ -460,9 +460,9 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->atmo->set_range(wxr->conf->ranges[0]);
 
 	vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
-	    "smear_vtx.glsl", NULL);
+	    "smear.vert", NULL);
 	frag = mkpathname(get_xpdir(), get_plugindir(), "data",
-	    "smear_frag.glsl", NULL);
+	    "smear.frag", NULL);
 	wxr->wxr_prog = shader_prog_from_file("smear", vtx, frag);
 	lacf_free(vtx);
 	lacf_free(frag);
