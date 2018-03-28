@@ -357,6 +357,13 @@ update_precip(void)
 	tmp_minus_20_alt = fx_lin(-20.0, dr_getf(&drs.temp_sl), 0,
 	    dr_getf(&drs.temp_tropo), dr_getf(&drs.alt_tropo));
 
+	/*
+	 * If the temperature is inverted, force the algorithm below to at
+	 * least not crash.
+	 */
+	if (tmp_0_alt >= tmp_minus_20_alt - 100)
+		tmp_0_alt = tmp_minus_20_alt - 1000;
+
 	for (int i = 0; i < 3; i++) {
 		/* clear skies or cirrus clouds don't generate precip */
 		if (dr_geti(&drs.cloud_type[i]) <= XP11_CLOUD_HIGH_CIRRUS)
