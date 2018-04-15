@@ -105,6 +105,20 @@ struct wxr_s {
 	worker_t		wk;
 };
 
+static void
+wxr_ant_return2neutral(wxr_t *wxr)
+{
+	const wxr_conf_t *conf = wxr->conf;
+
+	/*
+	 * Since advance_ant_pos always first increments or decrements the
+	 * variable before checking for reversal, we want to stay just one
+	 * step away from the eddge to allow for that.
+	 */
+	wxr->ant_pos = clampi((conf->res_x / conf->scan_angle) *
+	    (conf->parked_azi + conf->scan_angle / 2), 1, conf->res_x - 2);
+}
+
 static vect3_t
 randomize_normal(vect3_t norm)
 {
@@ -437,6 +451,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	ASSERT3F(conf->scan_time, >, 0);
 	ASSERT3F(conf->scan_angle, >, 0);
 	ASSERT3F(conf->scan_angle_vert, >, 0);
+	ASSERT3F(ABS(conf->parked_azi), <=, conf->scan_angle / 2);
 	ASSERT(atmo->probe != NULL);
 
 	mutex_init(&wxr->lock);
@@ -453,7 +468,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	    sizeof (*wxr->samples));
 	wxr->shadow_samples = safe_calloc(conf->res_x * conf->res_y,
 	    sizeof (*wxr->samples));
-	wxr->ant_pos = conf->res_x / 2;
+	wxr_ant_return2neutral(wxr);
 	wxr->azi_lim_right = conf->res_x - 1;
 	wxr->sl.energy_out = safe_calloc(wxr->conf->res_y, sizeof (double));
 	wxr->sl.doppler_out = safe_calloc(wxr->conf->res_y, sizeof (double));
@@ -967,7 +982,7 @@ wxr_set_standby(wxr_t *wxr, bool_t flag)
 		wxr->vert_mode = B_FALSE;
 		if (flag) {
 			worker_fini(&wxr->wk);
-			wxr->ant_pos = wxr->conf->res_x / 2;
+			wxr_ant_return2neutral(wxr);
 			memset(wxr->samples, 0, sizeof (*wxr->samples) *
 			    wxr->conf->res_x * wxr->conf->res_y);
 			memset(wxr->shadow_samples, 0, sizeof (*wxr->samples) *

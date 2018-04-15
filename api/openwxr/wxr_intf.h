@@ -77,6 +77,7 @@ typedef struct {
 	double		scan_time;	/* Secs for one full swing side2side */
 	double		scan_angle;	/* Degrees btwn full lateral deflect */
 	double		scan_angle_vert;/* Degrees btwn full vertical deflect */
+	double		parked_azi;	/* Neutral position of antenna in deg */
 } wxr_conf_t;
 
 #ifdef __cplusplus
