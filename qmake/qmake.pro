@@ -47,8 +47,7 @@ QMAKE_CXXFLAGS_WARN_ON -= -W -Wall
 # _GNU_SOURCE needed on Linux for getline()
 # DEBUG - used by our ASSERT macro
 # _FILE_OFFSET_BITS=64 to get 64-bit ftell and fseek on 32-bit platforms.
-# _USE_MATH_DEFINES - sometimes helps getting M_PI defined from system headers
-DEFINES += _GNU_SOURCE DEBUG _FILE_OFFSET_BITS=64 _USE_MATH_DEFINES
+DEFINES += _GNU_SOURCE DEBUG _FILE_OFFSET_BITS=64
 
 # Latest X-Plane APIs. No legacy support needed.
 DEFINES += XPLM200 XPLM210 GLEW_BUILD=GLEW_STATIC
