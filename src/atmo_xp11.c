@@ -20,6 +20,7 @@
 #include <stdlib.h>
 
 #include <GL/glew.h>
+#include <cglm/cglm.h>
 
 #include <XPLMGraphics.h>
 #include <XPLMDisplay.h>
@@ -27,6 +28,7 @@
 #include <acfutils/assert.h>
 #include <acfutils/dr.h>
 #include <acfutils/geom.h>
+#include <acfutils/glutils.h>
 #include <acfutils/helpers.h>
 #include <acfutils/math.h>
 #include <acfutils/perf.h>
@@ -100,6 +102,8 @@ static struct {
 	unsigned	efis_y;
 	unsigned	efis_w;
 	unsigned	efis_h;
+	mat4		efis_pvm;
+	glutils_quads_t	efis_quads;
 	GLuint		pbo;
 	GLuint		tmp_tex[3];
 	GLuint		tmp_fbo[3];
@@ -446,6 +450,16 @@ setup_opengl(void)
 		}
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, old_fbo);
 	}
+
+	if (xp11_atmo.efis_quads.vbo == 0) {
+		vect2_t vtx[4] = {
+		    VECT2(0, 0), VECT2(0, EFIS_HEIGHT),
+		    VECT2(EFIS_WIDTH, EFIS_HEIGHT), VECT2(EFIS_WIDTH, 0)
+		};
+		glutils_init_2D_quads(&xp11_atmo.efis_quads, vtx, NULL, 4);
+		glm_ortho(0, EFIS_WIDTH, 0, EFIS_HEIGHT, 0, 1,
+		    xp11_atmo.efis_pvm);
+	}
 }
 
 static void
@@ -478,19 +492,15 @@ transfer_new_efis_frame(void)
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, xp11_atmo.tmp_fbo[1]);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glActiveTexture(GL_TEXTURE0);
-	XPLMBindTexture2d(xp11_atmo.tmp_tex[0], GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, xp11_atmo.tmp_tex[0]);
 
 	glUseProgram(xp11_atmo.cleanup_prog);
+	glUniformMatrix4fv(glGetUniformLocation(xp11_atmo.cleanup_prog, "pvm"),
+	    1, GL_FALSE, (GLfloat *)xp11_atmo.efis_pvm);
 	glUniform1i(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex_sz"),
 	    EFIS_WIDTH, EFIS_HEIGHT);
-
-	glBegin(GL_QUADS);
-	glVertex2f(0, 0);
-	glVertex2f(0, EFIS_HEIGHT);
-	glVertex2f(EFIS_WIDTH, EFIS_HEIGHT);
-	glVertex2f(EFIS_WIDTH, 0);
-	glEnd();
+	glutils_draw_quads(&xp11_atmo.efis_quads);
 
 	/*
 	 * Step 3: smooth the EFIS output to get a more sensible
@@ -500,21 +510,17 @@ transfer_new_efis_frame(void)
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, xp11_atmo.tmp_fbo[2]);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glActiveTexture(GL_TEXTURE0);
-	XPLMBindTexture2d(xp11_atmo.tmp_tex[1], GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, xp11_atmo.tmp_tex[1]);
 
 	glUseProgram(xp11_atmo.smooth_prog);
+	glUniformMatrix4fv(glGetUniformLocation(xp11_atmo.smooth_prog, "pvm"),
+	    1, GL_FALSE, (GLfloat *)xp11_atmo.efis_pvm);
 	glUniform1i(glGetUniformLocation(xp11_atmo.smooth_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(xp11_atmo.smooth_prog, "tex_sz"),
 	    EFIS_WIDTH, EFIS_HEIGHT);
 	glUniform1f(glGetUniformLocation(xp11_atmo.smooth_prog, "smooth"),
 	    WX_SMOOTH_RNG / range);
-
-	glBegin(GL_QUADS);
-	glVertex2f(0, 0);
-	glVertex2f(0, EFIS_HEIGHT);
-	glVertex2f(EFIS_WIDTH, EFIS_HEIGHT);
-	glVertex2f(EFIS_WIDTH, 0);
-	glEnd();
+	glutils_draw_quads(&xp11_atmo.efis_quads);
 
 	glUseProgram(0);
 
@@ -594,7 +600,7 @@ out:
 atmo_t *
 atmo_xp11_init(const char *xpdir, const char *plugindir)
 {
-	char *path;
+	char *path, *path2;
 
 	ASSERT(!inited);
 	inited = B_TRUE;
@@ -652,13 +658,19 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 		xp11_atmo.precip_nodes[i] = VECT2(i, 0);
 	xp11_atmo.precip_nodes[4] = NULL_VECT2;
 
-	path = mkpathname(xpdir, plugindir, "data", "cleanup.frag", NULL);
-	xp11_atmo.cleanup_prog = shader_prog_from_file("cleanup", NULL, path);
+	path = mkpathname(xpdir, plugindir, "data", "generic.vert", NULL);
+	path2 = mkpathname(xpdir, plugindir, "data", "cleanup.frag", NULL);
+	xp11_atmo.cleanup_prog = shader_prog_from_file("cleanup", path, path2,
+	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
 	lacf_free(path);
+	lacf_free(path2);
 
-	path = mkpathname(xpdir, plugindir, "data", "smooth.frag", NULL);
-	xp11_atmo.smooth_prog = shader_prog_from_file("smooth", NULL, path);
+	path = mkpathname(xpdir, plugindir, "data", "generic.vert", NULL);
+	path2 = mkpathname(xpdir, plugindir, "data", "smooth.frag", NULL);
+	xp11_atmo.smooth_prog = shader_prog_from_file("smooth", path, path2,
+	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
 	lacf_free(path);
+	lacf_free(path2);
 
 	mutex_init(&xp11_atmo.lock);
 
@@ -684,6 +696,7 @@ atmo_xp11_fini(void)
 		glDeleteProgram(xp11_atmo.cleanup_prog);
 	if (xp11_atmo.smooth_prog != 0)
 		glDeleteProgram(xp11_atmo.smooth_prog);
+	glutils_destroy_quads(&xp11_atmo.efis_quads);
 
 	mutex_destroy(&xp11_atmo.lock);
 	XPLMUnregisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);

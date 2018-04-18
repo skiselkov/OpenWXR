@@ -22,24 +22,26 @@ uniform	sampler2D	tex;
 uniform	vec2		tex_size;
 uniform	float		smear_mult;
 
+varying	vec2		tex_coord;
+
 void
 main()
 {
-	vec4 pixel = texture2D(tex, gl_TexCoord[0].st);
+	vec4 pixel = texture2D(tex, tex_coord);
 
 	if (pixel.r == pixel.g && pixel.r == pixel.b) {
 		gl_FragColor = pixel;
 	} else {
-		float s1 = sin(gl_TexCoord[0].s * 16.1803);
-		float s2 = sin(gl_TexCoord[0].s * 95.828);
-		float s3 = sin(gl_TexCoord[0].s * 181.959);
-		float s4 = sin(gl_TexCoord[0].s * 314.159);
-		float s5 = sin(gl_TexCoord[0].s * 547.363);
+		float s1 = sin(tex_coord.s * 16.1803);
+		float s2 = sin(tex_coord.s * 95.828);
+		float s3 = sin(tex_coord.s * 181.959);
+		float s4 = sin(tex_coord.s * 314.159);
+		float s5 = sin(tex_coord.s * 547.363);
 		float smear_s = (smear_mult * 10.0 * s1 * s2 * s3 * s4 * s5) /
 		    tex_size.x;
 
-		float t1 = sin(gl_TexCoord[0].t * 16.1803);
-		float t2 = sin(gl_TexCoord[0].t * 95.828);
+		float t1 = sin(tex_coord.t * 16.1803);
+		float t2 = sin(tex_coord.t * 95.828);
 		float smear_t = (4.0 * smear_mult * t1) / tex_size.y;
 		vec4 sample;
 
@@ -49,7 +51,7 @@ main()
 		 * Gives us the look we jaggedy-edged look we want.
 		 */
 		gl_FragColor = texture2D(tex, vec2(
-		    clamp(gl_TexCoord[0].s + smear_t, 0.0, 1.0),
-		    clamp(gl_TexCoord[0].t + smear_s, 0.0, 1.0)));
+		    clamp(tex_coord.s + smear_t, 0.0, 1.0),
+		    clamp(tex_coord.t + smear_s, 0.0, 1.0)));
 	}
 }

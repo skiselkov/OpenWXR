@@ -26,11 +26,8 @@ attribute vec2	vtx_tex0;
 varying vec2	tex_coord;
 
 void
-main()
+main(void)
 {
-	gl_Position = pvm * vec4(vtx_pos, 1.0);
-	/*
-	 * Just transfer the UV mapping information to the fragment shader.
-	 */
 	tex_coord = vtx_tex0;
+	gl_Position = pvm * vec4(vtx_pos, 1.0);
 }

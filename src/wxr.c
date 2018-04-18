@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include <GL/glew.h>
+#include <cglm/cglm.h>
 
 #include <XPLMGraphics.h>
 #include <XPLMPlugin.h>
@@ -28,6 +29,7 @@
 
 #include <acfutils/assert.h>
 #include <acfutils/crc64.h>
+#include <acfutils/glutils.h>
 #include <acfutils/helpers.h>
 #include <acfutils/math.h>
 #include <acfutils/perf.h>
@@ -48,6 +50,7 @@
 #define	GROUND_RETURN_MULT	0.2		/* energy multiplier */
 #define	SHADOW_ENERGY_THRESH	0.57
 #define	ENERGY_SCALE_FACT	0.04
+#define	PANEL_TEX_SZ		2048		/* pixels */
 
 struct wxr_s {
 	const wxr_conf_t	*conf;
@@ -62,14 +65,11 @@ struct wxr_s {
 	GLsync			upload_sync;
 	uint64_t		last_upload;
 	GLuint			wxr_prog;
-
+	glutils_quads_t		wxr_scr_quads;
+	mat4			wxr_scr_pvm;
 	vect2_t			draw_pos;
 	vect2_t			draw_size;
 	bool_t			draw_vert;
-	size_t			draw_num_coords;
-	size_t			draw_num_coords_vert;
-	GLfloat			*draw_vtx_coords;
-	GLfloat			*draw_tex_coords;
 
 	mutex_t			lock;
 	/* protected by lock above */
@@ -439,7 +439,6 @@ wxr_worker(void *userinfo)
 wxr_t *
 wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 {
-	char *vtx, *frag;
 	wxr_t *wxr = safe_calloc(1, sizeof (*wxr));
 
 	ASSERT(conf->num_ranges != 0);
@@ -462,8 +461,6 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	/*
 	 * 4 vertices per quad, 2 coords per vertex
 	 */
-	wxr->draw_num_coords = 4 * 2 * ceil(conf->scan_angle);
-	wxr->draw_num_coords_vert = 4 * 2 * ceil(conf->scan_angle_vert);
 	wxr->samples = safe_calloc(conf->res_x * conf->res_y,
 	    sizeof (*wxr->samples));
 	wxr->shadow_samples = safe_calloc(conf->res_x * conf->res_y,
@@ -474,13 +471,8 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->sl.doppler_out = safe_calloc(wxr->conf->res_y, sizeof (double));
 	wxr->atmo->set_range(wxr->conf->ranges[0]);
 
-	vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
-	    "smear.vert", NULL);
-	frag = mkpathname(get_xpdir(), get_plugindir(), "data",
-	    "smear.frag", NULL);
-	wxr->wxr_prog = shader_prog_from_file("smear", vtx, frag);
-	lacf_free(vtx);
-	lacf_free(frag);
+	(void)wxr_reload_gl_progs(wxr);
+	glm_ortho(0, PANEL_TEX_SZ, 0, PANEL_TEX_SZ, 0, 1, wxr->wxr_scr_pvm);
 
 	wxr->opengpws = XPLMFindPluginBySignature(OPENGPWS_PLUGIN_SIG);
 	if (wxr->opengpws != XPLM_NO_PLUGIN_ID) {
@@ -508,8 +500,7 @@ wxr_fini(wxr_t *wxr)
 	if (wxr->shadow_pbo != 0)
 		glDeleteBuffers(1, &wxr->shadow_pbo);
 
-	free(wxr->draw_vtx_coords);
-	free(wxr->draw_tex_coords);
+	glutils_destroy_quads(&wxr->wxr_scr_quads);
 
 	free(wxr->samples);
 	free(wxr->shadow_samples);
@@ -785,17 +776,10 @@ wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size, bool_t vert)
 {
 	double scan_angle = !vert ? wxr->conf->scan_angle :
 	    wxr->conf->scan_angle_vert;
-	unsigned num_coords = !vert ? wxr->draw_num_coords :
-	    wxr->draw_num_coords_vert;
+	unsigned num_coords = ceil(scan_angle) * 4;
+	vect2_t vtx[num_coords], tex[num_coords];
 
-	if (wxr->draw_vtx_coords == NULL) {
-		wxr->draw_vtx_coords = safe_calloc(wxr->draw_num_coords,
-		    sizeof (*wxr->draw_vtx_coords));
-		wxr->draw_tex_coords = safe_calloc(wxr->draw_num_coords,
-		    sizeof (*wxr->draw_tex_coords));
-	}
-
-	for (unsigned i = 0, j = 0; i < num_coords; i += 4 * 2, j++) {
+	for (unsigned i = 0, j = 0; i < num_coords; i += 4, j++) {
 		/* Draw 1-degree increments */
 		double fract1 = (double)j / scan_angle;
 		double fract2 = (double)(j + 1) / scan_angle;
@@ -810,68 +794,45 @@ wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size, bool_t vert)
 
 		/* lower-left */
 		if (!vert)
-			wxr->draw_vtx_coords[i] = pos.x + size.x / 2;
+			vtx[i] = VECT2(pos.x + size.x / 2, pos.y);
 		else
-			wxr->draw_vtx_coords[i] = pos.x;
-		wxr->draw_tex_coords[i] = 0;
-
-		if (!vert)
-			wxr->draw_vtx_coords[i + 1] = pos.y;
-		else
-			wxr->draw_vtx_coords[i + 1] = pos.y + size.y / 2;
-		wxr->draw_tex_coords[i + 1] = fract1;
+			vtx[i] = VECT2(pos.x, pos.y + size.y / 2);
+		tex[i] = VECT2(0, fract1);
 
 		/* upper-left */
 		if (!vert) {
-			wxr->draw_vtx_coords[i + 2] = (pos.x + size.x / 2) +
+			vtx[i + 1].x = (pos.x + size.x / 2) +
 			    (sin(angle1) * (size.x / 2));
+			vtx[i + 1].y = pos.y + (cos(angle1) * size.y);
 		} else {
-			wxr->draw_vtx_coords[i + 2] =
-			    pos.x + (cos(angle1) * size.x);
-		}
-		wxr->draw_tex_coords[i + 2] = 1;
-
-		if (!vert) {
-			wxr->draw_vtx_coords[i + 3] =
-			    pos.y + (cos(angle1) * size.y);
-		} else {
-			wxr->draw_vtx_coords[i + 3] = (pos.y + size.y / 2) -
+			vtx[i + 1].x = pos.x + (cos(angle1) * size.x);
+			vtx[i + 1].y = (pos.y + size.y / 2) -
 			    (sin(angle1) * (size.y / 2));
 		}
-		wxr->draw_tex_coords[i + 3] = fract1;
+		tex[i + 1] = VECT2(1, fract1);
 
 		/* upper-right */
 		if (!vert) {
-			wxr->draw_vtx_coords[i + 4] = (pos.x + size.x / 2) +
+			vtx[i + 2].x = (pos.x + size.x / 2) +
 			    (sin(angle2) * (size.x / 2));
+			vtx[i + 2].y = pos.y + (cos(angle2) * size.y);
 		} else {
-			wxr->draw_vtx_coords[i + 4] =
-			    pos.x + (cos(angle2) * size.x);
-		}
-		wxr->draw_tex_coords[i + 4] = 1;
-
-		if (!vert) {
-			wxr->draw_vtx_coords[i + 5] =
-			    pos.y + (cos(angle2) * size.y);
-		} else {
-			wxr->draw_vtx_coords[i + 5] = (pos.y + size.y / 2) -
+			vtx[i + 2].x = pos.x + (cos(angle2) * size.x);
+			vtx[i + 2].y = (pos.y + size.y / 2) -
 			    (sin(angle2) * (size.y / 2));
 		}
-		wxr->draw_tex_coords[i + 5] = fract2;
+		tex[i + 2] = VECT2(1, fract2);
 
 		/* lower-right */
 		if (!vert)
-			wxr->draw_vtx_coords[i + 6] = pos.x + size.x / 2;
+			vtx[i + 3] = VECT2(pos.x + size.x / 2, pos.y);
 		else
-			wxr->draw_vtx_coords[i + 6] = pos.x;
-		wxr->draw_tex_coords[i + 6] = 0;
-
-		if (!vert)
-			wxr->draw_vtx_coords[i + 7] = pos.y;
-		else
-			wxr->draw_vtx_coords[i + 7] = pos.y + size.y / 2;
-		wxr->draw_tex_coords[i + 7] = fract2;
+			vtx[i + 3] = VECT2(pos.x, pos.y + size.y / 2);
+		tex[i + 3] = VECT2(0, fract2);
 	}
+
+	glutils_destroy_quads(&wxr->wxr_scr_quads);
+	glutils_init_2D_quads(&wxr->wxr_scr_quads, vtx, tex, num_coords);
 }
 
 static void
@@ -885,60 +846,59 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 		wxr->draw_vert = wxr->vert_mode;
 	}
 
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
 	glUseProgram(wxr->wxr_prog);
+
+	glUniformMatrix4fv(glGetUniformLocation(wxr->wxr_prog, "pvm"),
+	    1, GL_FALSE, (GLfloat *)wxr->wxr_scr_pvm);
 	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
 	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "smear_mult"),
 	    wxr->vert_mode ? 3 : 1);
 
-	glVertexPointer(2, GL_FLOAT, 0, wxr->draw_vtx_coords);
-	glTexCoordPointer(2, GL_FLOAT, 0, wxr->draw_tex_coords);
-	if (!wxr->draw_vert)
-		glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords / 2);
-	else
-		glDrawArrays(GL_QUADS, 0, wxr->draw_num_coords_vert / 2);
+	glutils_draw_quads(&wxr->wxr_scr_quads);
 
 	glUseProgram(0);
-
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
 static void
 wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
 	glUseProgram(wxr->wxr_prog);
+
+	glUniformMatrix4fv(glGetUniformLocation(wxr->wxr_prog, "pvm"),
+	    1, GL_FALSE, (GLfloat *)wxr->wxr_scr_pvm);
 	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
 
-	if (!wxr->vert_mode) {
-		glBegin(GL_QUADS);
-		glTexCoord2f(0, 0);
-		glVertex2f(pos.x, pos.y);
-		glTexCoord2f(1, 0);
-		glVertex2f(pos.x, pos.y + size.y);
-		glTexCoord2f(1, 1);
-		glVertex2f(pos.x + size.x, pos.y + size.y);
-		glTexCoord2f(0, 1);
-		glVertex2f(pos.x + size.x, pos.y);
-		glEnd();
-	} else {
-		glBegin(GL_QUADS);
-		glTexCoord2f(0, 0);
-		glVertex2f(pos.x, pos.y + size.y);
-		glTexCoord2f(1, 0);
-		glVertex2f(pos.x + size.x, pos.y + size.y);
-		glTexCoord2f(1, 1);
-		glVertex2f(pos.x + size.x, pos.y);
-		glTexCoord2f(0, 1);
-		glVertex2f(pos.x, pos.y);
-		glEnd();
+	if (!VECT2_EQ(pos, wxr->draw_pos) || !VECT2_EQ(size, wxr->draw_size) ||
+	    wxr->draw_vert != wxr->vert_mode) {
+		vect2_t vtx[4];
+		vect2_t tex[4] = {
+		    VECT2(0, 0), VECT2(1, 0), VECT2(1, 1), VECT2(0, 1)
+		};
+
+		if (!wxr->vert_mode) {
+			vtx[0] = VECT2(pos.x, pos.y);
+			vtx[1] = VECT2(pos.x, pos.y + size.y);
+			vtx[2] = VECT2(pos.x + size.x, pos.y + size.y);
+			vtx[3] = VECT2(pos.x + size.x, pos.y);
+		} else {
+			vtx[0] = VECT2(pos.x, pos.y + size.y);
+			vtx[1] = VECT2(pos.x + size.x, pos.y + size.y);
+			vtx[2] = VECT2(pos.x + size.x, pos.y);
+			vtx[3] = VECT2(pos.x, pos.y);
+		}
+		glutils_destroy_quads(&wxr->wxr_scr_quads);
+		glutils_init_2D_quads(&wxr->wxr_scr_quads, vtx, tex, 4);
+
+		wxr->draw_pos = pos;
+		wxr->draw_size = size;
+		wxr->draw_vert = wxr->vert_mode;
 	}
+
+	glutils_draw_quads(&wxr->wxr_scr_quads);
 
 	glUseProgram(0);
 }
@@ -1072,4 +1032,26 @@ wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num)
 		wxr->num_colors = num;
 		mutex_exit(&wxr->lock);
 	}
+}
+
+bool_t
+wxr_reload_gl_progs(wxr_t *wxr)
+{
+	char *vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
+	    "smear.vert", NULL);
+	char *frag = mkpathname(get_xpdir(), get_plugindir(), "data",
+	    "smear.frag", NULL);
+	GLuint prog = shader_prog_from_file("smear", vtx, frag,
+	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
+	lacf_free(vtx);
+	lacf_free(frag);
+
+	if (prog == 0)
+		return (B_FALSE);
+
+	if (wxr->wxr_prog != 0)
+		glDeleteProgram(wxr->wxr_prog);
+	wxr->wxr_prog = prog;
+
+	return (B_TRUE);
 }

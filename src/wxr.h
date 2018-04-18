@@ -66,6 +66,8 @@ void wxr_clear_screen(wxr_t *wxr);
 
 void wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num);
 
+bool_t wxr_reload_gl_progs(wxr_t *wxr);
+
 #ifdef __cplusplus
 }
 #endif
