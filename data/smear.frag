@@ -17,9 +17,9 @@
  */
 
 #version 120
+#extension GL_EXT_gpu_shader4: enable
 
 uniform	sampler2D	tex;
-uniform	vec2		tex_size;
 uniform	float		smear_mult;
 
 varying	vec2		tex_coord;
@@ -28,6 +28,7 @@ void
 main()
 {
 	vec4 pixel = texture2D(tex, tex_coord);
+	vec2 tex_size = textureSize2D(tex, 0);
 
 	if (pixel.r == pixel.g && pixel.r == pixel.b) {
 		gl_FragColor = pixel;
@@ -37,12 +38,12 @@ main()
 		float s3 = sin(tex_coord.s * 181.959);
 		float s4 = sin(tex_coord.s * 314.159);
 		float s5 = sin(tex_coord.s * 547.363);
-		float smear_s = (smear_mult * 10.0 * s1 * s2 * s3 * s4 * s5) /
+		float smear_s = (2.5 * smear_mult * s1 * s2 * s3 * s4 * s5) /
 		    tex_size.x;
 
 		float t1 = sin(tex_coord.t * 16.1803);
 		float t2 = sin(tex_coord.t * 95.828);
-		float smear_t = (4.0 * smear_mult * t1) / tex_size.y;
+		float smear_t = (smear_mult * t1) / tex_size.y;
 		vec4 sample;
 
 		/*

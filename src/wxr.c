@@ -854,7 +854,7 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
 	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "smear_mult"),
-	    wxr->vert_mode ? 3 : 1);
+	    wxr->vert_mode ? wxr->conf->smear.y : wxr->conf->smear.x);
 
 	glutils_draw_quads(&wxr->wxr_scr_quads);
 

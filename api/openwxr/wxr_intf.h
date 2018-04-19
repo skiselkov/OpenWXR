@@ -78,6 +78,14 @@ typedef struct {
 	double		scan_angle;	/* Degrees btwn full lateral deflect */
 	double		scan_angle_vert;/* Degrees btwn full vertical deflect */
 	double		parked_azi;	/* Neutral position of antenna in deg */
+	/*
+	 * This controls lateral smearing of the rendered radar image to
+	 * simulate small scanning inaccuracies. The X axis is used for
+	 * lateral smearing (approximately in pixels) when in horizontal
+	 * scanning mode, whereas the Y axis is used for up-down smearing
+	 * in the vertical scanning mode.
+	 */
+	vect2_t		smear;
 } wxr_conf_t;
 
 #ifdef __cplusplus
