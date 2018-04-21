@@ -554,6 +554,8 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 	if (dr_geti(&drs.render_type) != XPLANE_RENDER_GAUGES_3D_LIT)
 		return (1);
 
+	glutils_disable_all_client_state();
+
 	mutex_enter(&xp11_atmo.lock);
 
 	update_efis();
