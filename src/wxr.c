@@ -856,7 +856,7 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "smear_mult"),
 	    wxr->vert_mode ? wxr->conf->smear.y : wxr->conf->smear.x);
 
-	glutils_draw_quads(&wxr->wxr_scr_quads);
+	glutils_draw_quads(&wxr->wxr_scr_quads, wxr->wxr_prog);
 
 	glUseProgram(0);
 }
@@ -898,7 +898,7 @@ wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 		wxr->draw_vert = wxr->vert_mode;
 	}
 
-	glutils_draw_quads(&wxr->wxr_scr_quads);
+	glutils_draw_quads(&wxr->wxr_scr_quads, wxr->wxr_prog);
 
 	glUseProgram(0);
 }

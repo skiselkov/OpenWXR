@@ -500,7 +500,7 @@ transfer_new_efis_frame(void)
 	glUniform1i(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex_sz"),
 	    EFIS_WIDTH, EFIS_HEIGHT);
-	glutils_draw_quads(&xp11_atmo.efis_quads);
+	glutils_draw_quads(&xp11_atmo.efis_quads, xp11_atmo.cleanup_prog);
 
 	/*
 	 * Step 3: smooth the EFIS output to get a more sensible
@@ -520,7 +520,7 @@ transfer_new_efis_frame(void)
 	    EFIS_WIDTH, EFIS_HEIGHT);
 	glUniform1f(glGetUniformLocation(xp11_atmo.smooth_prog, "smooth"),
 	    WX_SMOOTH_RNG / range);
-	glutils_draw_quads(&xp11_atmo.efis_quads);
+	glutils_draw_quads(&xp11_atmo.efis_quads, xp11_atmo.smooth_prog);
 
 	glUseProgram(0);
 
