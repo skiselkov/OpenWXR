@@ -39,6 +39,7 @@
 #include "atmo_xp11.h"
 #include "dbg_log.h"
 #include <openwxr/xplane_api.h>
+#include "standalone.h"
 #include "wxr.h"
 
 #define	PLUGIN_NAME		"OpenWXR by Saso Kiselkov"
@@ -75,14 +76,40 @@ static openwxr_intf_t openwxr_intf = {
 	.set_vert_mode = wxr_set_vert_mode,
 	.get_vert_mode = wxr_get_vert_mode,
 	.set_colors = wxr_set_colors,
+	.get_brightness = wxr_get_brightness,
+	.set_brightness = wxr_set_brightness,
 	.reload_gl_progs = wxr_reload_gl_progs
 };
+
+static conf_t *
+load_config_file(void)
+{
+	char *confpath = mkpathname(xpdir, plugindir, "OpenWXR.cfg", NULL);
+	conf_t *conf = NULL;
+
+	if (file_exists(confpath, NULL)) {
+		int errline;
+
+		conf = conf_read_file(confpath, &errline);
+		if (conf == NULL) {
+			if (errline < 0) {
+				logMsg("Error reading configuration %s: cannot "
+				    "open configuration file.", confpath);
+			} else {
+				logMsg("Error reading configuration %s: syntax "
+				    "error on line %d.", confpath, errline);
+			}
+		}
+	}
+	lacf_free(confpath);
+
+	return (conf);
+}
 
 PLUGIN_API int
 XPluginStart(char *name, char *sig, char *desc)
 {
 	char *p;
-	char *confpath;
 	conf_t *conf = NULL;
 	GLenum err;
 
@@ -148,26 +175,11 @@ XPluginStart(char *name, char *sig, char *desc)
 		return (0);
 	}
 
-	confpath = mkpathname(xpdir, plugindir, "OpenWXR.cfg", NULL);
-	if (file_exists(confpath, NULL)) {
-		int errline;
-
-		conf = conf_read_file(confpath, &errline);
-		if (conf == NULL) {
-			if (errline < 0) {
-				logMsg("Error reading configuration %s: cannot "
-				    "open configuration file.", confpath);
-			} else {
-				logMsg("Error reading configuration %s: syntax "
-				    "error on line %d.", confpath, errline);
-			}
-		}
-	}
+	conf = load_config_file();
 	if (conf == NULL)
 		conf = conf_create_empty();
 	dbg_log_init(conf);
 	conf_free(conf);
-	lacf_free(confpath);
 
 	/*
 	 * Must go ahead of XPluginEnable to always have an atmosphere
@@ -194,12 +206,26 @@ XPluginStop(void)
 PLUGIN_API int
 XPluginEnable(void)
 {
+	conf_t *conf = load_config_file();
+
+	if (conf != NULL) {
+		bool_t standalone = B_FALSE;
+
+		conf_get_b(conf, "standalone", &standalone);
+		if (standalone && !sa_init(conf)) {
+			conf_free(conf);
+			return (0);
+		}
+		conf_free(conf);
+	}
+
 	return (1);
 }
 
 PLUGIN_API void
 XPluginDisable(void)
 {
+	sa_fini();
 }
 
 PLUGIN_API void

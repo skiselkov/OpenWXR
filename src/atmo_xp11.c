@@ -58,6 +58,7 @@ static atmo_t atmo = {
 	.set_range = atmo_xp11_set_range,
 	.probe = atmo_xp11_probe
 };
+static XPLMCommandRef debug_cmd = NULL;
 
 enum {
 	XPLANE_RENDER_GAUGES_2D = 0,
@@ -155,6 +156,39 @@ static struct {
 	} EFIS;
 } drs;
 
+static int
+debug_cmd_handler(XPLMCommandRef ref, XPLMCommandPhase phase, void *refcon)
+{
+	uint8_t buf[EFIS_WIDTH * EFIS_HEIGHT * 4];
+	GLint old_read_fbo;
+
+	UNUSED(ref);
+	UNUSED(refcon);
+
+	if (phase != xplm_CommandBegin)
+		return (1);
+
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &old_read_fbo);
+	for (int i = 0; i < 3; i++) {
+		char filename[64];
+
+		if (xp11_atmo.tmp_fbo[i] == 0)
+			continue;
+
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, xp11_atmo.tmp_fbo[i]);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+		glReadPixels(0, 0, EFIS_WIDTH, EFIS_HEIGHT,
+		    GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		snprintf(filename, sizeof (filename), "xp11_atmo_fbo%d.png",
+		    i);
+		png_write_to_file_rgba(filename, EFIS_WIDTH, EFIS_HEIGHT, buf);
+	}
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, old_read_fbo);
+
+	return (1);
+}
+
 static void
 atmo_xp11_set_range(double range)
 {
@@ -162,6 +196,7 @@ atmo_xp11_set_range(double range)
 	/* Set the fallback value first */
 	xp11_atmo.range = efis_map_ranges[EFIS_MAP_NUM_RANGES - 1];
 	xp11_atmo.range_i = EFIS_MAP_NUM_RANGES - 1;
+
 	for (int i = 0; i < EFIS_MAP_NUM_RANGES; i++) {
 		if (range <= efis_map_ranges[i]) {
 			xp11_atmo.range = efis_map_ranges[i];
@@ -609,6 +644,11 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 
 	memset(&xp11_atmo, 0, sizeof (xp11_atmo));
 
+	debug_cmd = XPLMCreateCommand("openwxr/debug_atmo_xp11",
+	    "Dump XP11 screenshot into X-Plane folder");
+	ASSERT(debug_cmd != NULL);
+	XPLMRegisterCommandHandler(debug_cmd, debug_cmd_handler, 0, NULL);
+
 	for (int i = 0; i < 3; i++) {
 		fdr_find(&drs.cloud_type[i],
 		    "sim/weather/cloud_type[%d]", i);
@@ -687,6 +727,8 @@ atmo_xp11_fini(void)
 	if (!inited)
 		return;
 	inited = B_FALSE;
+
+	XPLMUnregisterCommandHandler(debug_cmd, debug_cmd_handler, 0, NULL);
 
 	if (xp11_atmo.pbo != 0)
 		glDeleteBuffers(1, &xp11_atmo.pbo);

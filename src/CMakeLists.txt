@@ -19,12 +19,14 @@ project(openwxr C)
 SET(SRC
     atmo_xp11.c
     dbg_log.c
+    standalone.c
     wxr.c
     xplane.c)
 SET(HDR
     atmo.h
     atmo_xp11.h
     dbg_log.h
+    standalone.h
     wxr.h
     xplane.h)
 
@@ -75,8 +77,8 @@ execute_process(COMMAND git rev-parse --short HEAD
 string(REGEX REPLACE "\n$" "" PLUGIN_VERSION "${PLUGIN_VERSION}")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPLUGIN_VERSION='\"${PLUGIN_VERSION}\"'")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DXPLM200=1 -DXPLM210=1 \
-    -DGLEW_BUILD=GLEW_STATIC")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DXPLM200=1 -DXPLM210=1 -DXPLM300=1 \
+    -DXPLM301=1 -DGLEW_BUILD=GLEW_STATIC")
 if(APPLE)
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DAPL=1 -DIBM=0 -DLIN=0")
 else()
@@ -109,8 +111,8 @@ if(APPLE)
 	    ${LIBACFUTILS}/freetype/freetype-mac-64/lib
 	    ${LIBACFUTILS}/cairo/pixman-mac-64/lib
 	    ${LIBACFUTILS}/cairo/cairo-mac-64/lib
-	    ${LIBACFUTILS}/zlib/zlib-mac-64/lib
 	    ${LIBACFUTILS}/libpng/libpng-mac-64/lib
+	    ${LIBACFUTILS}/zlib/zlib-mac-64/lib
 	    ${LIBACFUTILS}/lzma/qmake/mac-64)
 	FIND_LIBRARY(XPLM_LIBRARY XPLM)
 	FIND_LIBRARY(XPWIDGETS_LIBRARY XPWidgets)
@@ -175,7 +177,8 @@ else()
 	    ${PIXMAN_LIBRARY}
 	    ${FREETYPE_LIBRARY}
 	    ${LIBPNG_LIBRARY}
-	    ${ZLIB_LIBRARY}
+	    # Need to forcibly shove this down cmake's throat
+	    "${LIBACFUTILS}/zlib/zlib-linux-64/lib/libz.a"
 	    ${PTHREAD_NONSHARED}
 	    ${LIBC_NONSHARED}
 	    ${LZMA_LIBRARY}

@@ -21,17 +21,25 @@
 
 uniform	sampler2D	tex;
 uniform	float		smear_mult;
+uniform float		brt;
 
 varying	vec2		tex_coord;
+
+float
+color(float c)
+{
+	return (c * (pow(4.0, brt) / 4.0));
+}
 
 void
 main()
 {
 	vec4 pixel = texture2D(tex, tex_coord);
 	vec2 tex_size = textureSize2D(tex, 0);
+	vec4 out_color;
 
 	if (pixel.r == pixel.g && pixel.r == pixel.b) {
-		gl_FragColor = pixel;
+		out_color = pixel;
 	} else {
 		float s1 = sin(tex_coord.s * 16.1803);
 		float s2 = sin(tex_coord.s * 95.828);
@@ -51,8 +59,10 @@ main()
 		 * component is smeared using smear_s and vice versa.
 		 * Gives us the look we jaggedy-edged look we want.
 		 */
-		gl_FragColor = texture2D(tex, vec2(
+		out_color = texture2D(tex, vec2(
 		    clamp(tex_coord.s + smear_t, 0.0, 1.0),
 		    clamp(tex_coord.t + smear_s, 0.0, 1.0)));
 	}
+	gl_FragColor = vec4(color(out_color.r), color(out_color.g),
+	    color(out_color.b), out_color.a);
 }

@@ -66,10 +66,10 @@ struct wxr_s {
 	uint64_t		last_upload;
 	GLuint			wxr_prog;
 	glutils_quads_t		wxr_scr_quads;
-	mat4			wxr_scr_pvm;
 	vect2_t			draw_pos;
 	vect2_t			draw_size;
 	bool_t			draw_vert;
+	double			brt;
 
 	mutex_t			lock;
 	/* protected by lock above */
@@ -84,7 +84,7 @@ struct wxr_s {
 	unsigned		azi_lim_right;
 	double			pitch_stab;
 	double			roll_stab;
-	const wxr_color_t *	colors;
+	wxr_color_t *		colors;
 	size_t			num_colors;
 
 	/* only accessed from worker thread */
@@ -98,6 +98,9 @@ struct wxr_s {
 	uint32_t		*samples;
 	uint32_t		*shadow_samples;
 	bool_t			beam_shadow;
+
+	/* set only at wxr_t creation time */
+	uint64_t		worker_intval;
 
 	XPLMPluginID		opengpws;
 	const egpws_intf_t	*terr;
@@ -192,6 +195,7 @@ wxr_worker(void *userinfo)
 	double extra_pitch = 0, extra_roll = 0;
 	size_t num_colors;
 	wxr_color_t *colors;
+	unsigned work_step;
 
 #ifdef	WXR_PROFILE
 	uint64_t now = microclock();
@@ -268,8 +272,9 @@ wxr_worker(void *userinfo)
 		    wxr->conf->scan_angle) * wxr->conf->scan_time;
 	}
 
-	for (unsigned i = 0; i < (unsigned)(wxr->conf->res_x *
-	    (USEC2SEC(WORKER_INTVAL) / scan_time)); i++) {
+	work_step = MAX(1, round(wxr->conf->res_x *
+	    (USEC2SEC(wxr->worker_intval) / scan_time)));
+	for (unsigned i = 0; i < work_step; i++) {
 		enum { NUM_VERT_SECTORS = 10 };
 		double ant_hdg, ant_pitch_up_down;
 		int off;
@@ -449,7 +454,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	ASSERT3F(conf->beam_shape.y, >, 0);
 	ASSERT3F(conf->scan_time, >, 0);
 	ASSERT3F(conf->scan_angle, >, 0);
-	ASSERT3F(conf->scan_angle_vert, >, 0);
+	ASSERT3F(conf->scan_angle_vert, >=, 0);
 	ASSERT3F(ABS(conf->parked_azi), <=, conf->scan_angle / 2);
 	ASSERT(atmo->probe != NULL);
 
@@ -472,7 +477,6 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->atmo->set_range(wxr->conf->ranges[0]);
 
 	(void)wxr_reload_gl_progs(wxr);
-	glm_ortho(0, PANEL_TEX_SZ, 0, PANEL_TEX_SZ, 0, 1, wxr->wxr_scr_pvm);
 
 	wxr->opengpws = XPLMFindPluginBySignature(OPENGPWS_PLUGIN_SIG);
 	if (wxr->opengpws != XPLM_NO_PLUGIN_ID) {
@@ -480,7 +484,11 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 		    &wxr->terr);
 	}
 
-	worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr, "OpenWXR-worker");
+	wxr->worker_intval = MAX(
+	    SEC2USEC(wxr->conf->scan_time / wxr->conf->res_x), WORKER_INTVAL);
+
+	worker_init(&wxr->wk, wxr_worker, wxr->worker_intval, wxr,
+	    "OpenWXR-worker");
 
 	return (wxr);
 }
@@ -491,6 +499,7 @@ wxr_fini(wxr_t *wxr)
 	if (!wxr->standby)
 		worker_fini(&wxr->wk);
 
+	free(wxr->colors);
 	if (wxr->tex[0] != 0)
 		glDeleteTextures(2, wxr->tex);
 	if (wxr->pbo != 0)
@@ -838,6 +847,8 @@ wxr_draw_arc_recache(wxr_t *wxr, vect2_t pos, vect2_t size, bool_t vert)
 static void
 wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
+	GLfloat pvm[16];
+
 	if (!VECT2_EQ(pos, wxr->draw_pos) || !VECT2_EQ(size, wxr->draw_size) ||
 	    wxr->draw_vert != wxr->vert_mode) {
 		wxr_draw_arc_recache(wxr, pos, size, wxr->vert_mode);
@@ -848,13 +859,16 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 
 	glUseProgram(wxr->wxr_prog);
 
+	glutils_vp2pvm(pvm);
+
 	glUniformMatrix4fv(glGetUniformLocation(wxr->wxr_prog, "pvm"),
-	    1, GL_FALSE, (GLfloat *)wxr->wxr_scr_pvm);
+	    1, GL_FALSE, pvm);
 	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
 	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "smear_mult"),
 	    wxr->vert_mode ? wxr->conf->smear.y : wxr->conf->smear.x);
+	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "brt"), wxr->brt);
 
 	glutils_draw_quads(&wxr->wxr_scr_quads, wxr->wxr_prog);
 
@@ -864,10 +878,14 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 static void
 wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
+	GLfloat pvm[16];
+
 	glUseProgram(wxr->wxr_prog);
 
+	glutils_vp2pvm(pvm);
+
 	glUniformMatrix4fv(glGetUniformLocation(wxr->wxr_prog, "pvm"),
-	    1, GL_FALSE, (GLfloat *)wxr->wxr_scr_pvm);
+	    1, GL_FALSE, pvm);
 	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
 	    wxr->conf->res_x, wxr->conf->res_y);
@@ -937,20 +955,21 @@ wxr_get_beam_shadow(const wxr_t *wxr)
 void
 wxr_set_standby(wxr_t *wxr, bool_t flag)
 {
-	if (wxr->standby != flag) {
-		wxr->standby = flag;
-		wxr->vert_mode = B_FALSE;
-		if (flag) {
-			worker_fini(&wxr->wk);
-			wxr_ant_return2neutral(wxr);
-			memset(wxr->samples, 0, sizeof (*wxr->samples) *
-			    wxr->conf->res_x * wxr->conf->res_y);
-			memset(wxr->shadow_samples, 0, sizeof (*wxr->samples) *
-			    wxr->conf->res_x * wxr->conf->res_y);
-		} else {
-			worker_init(&wxr->wk, wxr_worker, WORKER_INTVAL, wxr,
-			    "OpenWXR-worker");
-		}
+	if (wxr->standby == flag)
+		return;
+
+	wxr->standby = flag;
+	wxr->vert_mode = B_FALSE;
+	if (flag) {
+		worker_fini(&wxr->wk);
+		wxr_ant_return2neutral(wxr);
+		memset(wxr->samples, 0, sizeof (*wxr->samples) *
+		    wxr->conf->res_x * wxr->conf->res_y);
+		memset(wxr->shadow_samples, 0, sizeof (*wxr->samples) *
+		    wxr->conf->res_x * wxr->conf->res_y);
+	} else {
+		worker_init(&wxr->wk, wxr_worker, wxr->worker_intval, wxr,
+		    "OpenWXR-worker");
 	}
 }
 
@@ -958,6 +977,18 @@ bool_t
 wxr_get_standby(const wxr_t *wxr)
 {
 	return (wxr->standby);
+}
+
+void
+wxr_set_brightness(wxr_t *wxr, double brt)
+{
+	wxr->brt = brt;
+}
+
+double
+wxr_get_brightness(const wxr_t *wxr)
+{
+	return (wxr->brt);
 }
 
 void
@@ -980,6 +1011,8 @@ wxr_clear_screen(wxr_t *wxr)
 void
 wxr_set_vert_mode(wxr_t *wxr, bool_t flag, double azimuth)
 {
+	ASSERT3F(wxr->conf->scan_angle_vert, >, 0);
+
 	if (!wxr->standby)
 		mutex_enter(&wxr->wk.lock);
 
@@ -1026,9 +1059,13 @@ wxr_get_vert_mode(const wxr_t *wxr)
 void
 wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num)
 {
-	if (colors != wxr->colors) {
+	if (wxr->num_colors == 0 ||
+	    memcmp(colors, wxr->colors,
+	    wxr->num_colors * sizeof (*colors)) != 0) {
 		mutex_enter(&wxr->lock);
-		wxr->colors = colors;
+		free(wxr->colors);
+		wxr->colors = calloc(num, sizeof (*colors));
+		memcpy(wxr->colors, colors, num * sizeof (*colors));
 		wxr->num_colors = num;
 		mutex_exit(&wxr->lock);
 	}
