@@ -62,6 +62,9 @@ bool_t wxr_get_vert_mode(const wxr_t *wxr);
 void wxr_set_gnd_sense(wxr_t *wxr, bool_t flag);
 bool_t wxr_get_gnd_sense(const wxr_t *wxr);
 
+void wxr_set_brightness(wxr_t *wxr, double brt);
+double wxr_get_brightness(const wxr_t *wxr);
+
 void wxr_clear_screen(wxr_t *wxr);
 
 void wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num);

@@ -50,7 +50,7 @@ QMAKE_CXXFLAGS_WARN_ON -= -W -Wall
 DEFINES += _GNU_SOURCE DEBUG _FILE_OFFSET_BITS=64
 
 # Latest X-Plane APIs. No legacy support needed.
-DEFINES += XPLM200 XPLM210 GLEW_BUILD=GLEW_STATIC
+DEFINES += XPLM200 XPLM210 XPLM300 XPLM301 GLEW_BUILD=GLEW_STATIC
 
 # Grab the latest tag as the version number for a release version.
 # (TODO: beta builds are only identified by the git commit ID)

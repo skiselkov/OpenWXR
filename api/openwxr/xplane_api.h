@@ -60,6 +60,8 @@ typedef struct {
 	void (*set_vert_mode)(wxr_t *wxr, bool_t flag, double azimuth);
 	bool_t (*get_vert_mode)(const wxr_t *wxr);
 	void (*set_colors)(wxr_t *wxr, const wxr_color_t *colors, size_t num);
+	double (*get_brightness)(const wxr_t *wxr);
+	void (*set_brightness)(wxr_t *wxr, double brt);
 
 	/* Debugging support */
 	bool_t (*reload_gl_progs)(wxr_t *wxr);
