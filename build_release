@@ -29,7 +29,8 @@ else
 	    "$OUTPUT_DIR/mac_x64/${OUTPUT_DIR}.xpl"
 fi
 
-find data -iname '*.opus' -or -iname '*.frag' -or -iname '*.vert' | \
+find data fonts -iname '*.opus' -or -iname '*.frag' -or -iname '*.vert' \
+    -or -iname '*.ttf' -or -iname '*.otf' | \
     while read; do
 	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
 done
