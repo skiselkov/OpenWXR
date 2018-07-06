@@ -51,6 +51,7 @@
 #define	SHADOW_ENERGY_THRESH	0.57
 #define	ENERGY_SCALE_FACT	0.04
 #define	PANEL_TEX_SZ		2048		/* pixels */
+#define	SCR_CLEAR_DELAY		200000		/* microseconds */
 
 struct wxr_s {
 	const wxr_conf_t	*conf;
@@ -86,6 +87,7 @@ struct wxr_s {
 	double			roll_stab;
 	wxr_color_t *		colors;
 	size_t			num_colors;
+	uint64_t		scr_clear_time;
 
 	/* only accessed from worker thread */
 	unsigned		ant_pos;
@@ -196,9 +198,10 @@ wxr_worker(void *userinfo)
 	size_t num_colors;
 	wxr_color_t *colors;
 	unsigned work_step;
+	uint64_t now = microclock();
+	bool_t suppress_drawing;
 
 #ifdef	WXR_PROFILE
-	uint64_t now = microclock();
 	static uint64_t last_report_time = 0;
 	static uint64_t total_time = 0;
 	uint64_t start, end;
@@ -207,6 +210,8 @@ wxr_worker(void *userinfo)
 #endif	/* WXR_PROFILE */
 
 	mutex_enter(&wxr->lock);
+
+	suppress_drawing = (now - wxr->scr_clear_time < SCR_CLEAR_DELAY);
 
 	wxr->sl.origin = wxr->acf_pos;
 	wxr->sl.shape = wxr->conf->beam_shape;
@@ -288,6 +293,9 @@ wxr_worker(void *userinfo)
 		memset(energy_spent, 0, sizeof (energy_spent));
 
 		advance_ant_pos(wxr);
+		if (suppress_drawing)
+			continue;
+
 		if (!wxr->vert_mode)
 			off = wxr->ant_pos * wxr->conf->res_y;
 		else
@@ -1002,6 +1010,7 @@ wxr_clear_screen(wxr_t *wxr)
 	    sizeof (*wxr->samples) * wxr->conf->res_x * wxr->conf->res_y);
 	memset(wxr->shadow_samples, 0,
 	    sizeof (*wxr->samples) * wxr->conf->res_x * wxr->conf->res_y);
+	wxr->scr_clear_time = microclock();
 	mutex_exit(&wxr->lock);
 
 	if (!wxr->standby)

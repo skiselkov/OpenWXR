@@ -19,6 +19,7 @@ project(openwxr C)
 SET(SRC
     atmo_xp11.c
     dbg_log.c
+    fontmgr.c
     standalone.c
     wxr.c
     xplane.c)
@@ -26,6 +27,7 @@ SET(HDR
     atmo.h
     atmo_xp11.h
     dbg_log.h
+    fontmgr.h
     standalone.h
     wxr.h
     xplane.h)

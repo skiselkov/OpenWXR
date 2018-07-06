@@ -34,6 +34,7 @@
 #include "../api/openwxr/wxr_intf.h"
 #include "../api/openwxr/xplane_api.h"
 
+#include "fontmgr.h"
 #include "standalone.h"
 
 #define	MAX_SCREENS	4
@@ -46,16 +47,31 @@
 #define	EFIS_HEIGHT	268
 #define	MAX_DR_NAME	128
 
+#define	NUM_DELAY_STEPS	10
+
 #define	COLOR(c, scr)	((c) * ((pow(4.0, (scr)->brt / 0.75)) / 4.0))
 #define	CYAN_RGB(scr)	COLOR(0, (scr)), COLOR(0.66, (scr)), COLOR(0.66, (scr))
 
 static bool_t inited = B_FALSE;
+
+typedef enum {
+	TEXT_ALIGN_LEFT,
+	TEXT_ALIGN_CENTER,
+	TEXT_ALIGN_RIGHT
+} text_align_t;
 
 typedef struct {
 	char		name[MAX_DR_NAME];
 	bool_t		have_dr;
 	dr_t		dr;
 } delayed_dr_t;
+
+typedef struct {
+	double		value;
+	double		delay;
+	double		value_stack[NUM_DELAY_STEPS];
+	double		stack_adv_t;
+} delayed_ctl_t;
 
 typedef enum {
 	PANEL_RENDER_TYPE_2D = 0,
@@ -68,6 +84,7 @@ typedef struct wxr_sys_s wxr_sys_t;
 typedef struct {
 	double			x, y;
 	double			w, h;
+	double			underscan;
 	struct wxr_sys_s	*sys;
 	mt_cairo_render_t	*mtcr;
 
@@ -77,11 +94,13 @@ typedef struct {
 	double			brt;
 
 	delayed_dr_t		power_dr;
+	delayed_dr_t		power_sw_dr;
 	delayed_dr_t		brt_dr;
 	double			scr_temp;
 } wxr_scr_t;
 
 typedef struct {
+	char			name[16];
 	vect2_t			stab_lim;
 	unsigned		num_colors;
 	wxr_color_t		colors[MAX_COLORS];
@@ -92,6 +111,7 @@ struct wxr_sys_s {
 	double			power_on_time;
 	double			power_on_delay;
 
+	mutex_t			mode_lock;
 	unsigned		num_modes;
 	unsigned		cur_mode;
 	wxr_conf_t		modes[MAX_MODES];
@@ -103,12 +123,21 @@ struct wxr_sys_s {
 	unsigned		efis_xywh[4];
 
 	delayed_dr_t		power_dr;
+	delayed_dr_t		power_sw_dr;
 	delayed_dr_t		mode_dr;
 	delayed_dr_t		tilt_dr;
 	delayed_dr_t		range_dr;
 	delayed_dr_t		gain_dr;
 
+	delayed_ctl_t		mode_ctl;
+	delayed_ctl_t		range_ctl;
+	delayed_ctl_t		tilt_ctl;
+
+	double			range;
 	double			gain_auto_pos;
+	double			tilt;
+	double			tilt_rate;
+
 	bool_t			shared_egpws;
 	const egpws_intf_t	*terr;
 };
@@ -118,8 +147,10 @@ static XPLMWindowID debug_win = NULL;
 static XPLMCommandRef open_debug_cmd = NULL;
 
 static struct {
+	dr_t		lat, lon, elev;
 	dr_t		sim_time;
 	dr_t		panel_render_type;
+	dr_t		pitch, roll, hdg;
 } drs;
 
 static XPLMPluginID openwxr = XPLM_NO_PLUGIN_ID;
@@ -160,6 +191,36 @@ static void draw_debug_win(XPLMWindowID win, void *refcon);
 		} \
 	} while (0)
 
+static void
+delayed_ctl_set(delayed_ctl_t *ctl, double new_value)
+{
+	double now = dr_getf(&drs.sim_time);
+
+	for (double delta = now - ctl->stack_adv_t;
+	    delta > ctl->delay / NUM_DELAY_STEPS;
+	    delta -= ctl->delay / NUM_DELAY_STEPS) {
+		ctl->stack_adv_t = now;
+		ctl->value = ctl->value_stack[0];
+		for (int i = 0; i < NUM_DELAY_STEPS - 1; i++)
+			ctl->value_stack[i] = ctl->value_stack[i + 1];
+		ctl->value_stack[NUM_DELAY_STEPS - 1] = new_value;
+	}
+}
+
+static double delayed_ctl_get(delayed_ctl_t *ctl) UNUSED_ATTR;
+
+static double
+delayed_ctl_get(delayed_ctl_t *ctl)
+{
+	return (ctl->value);
+}
+
+static int
+delayed_ctl_geti(delayed_ctl_t *ctl)
+{
+	return (round(ctl->value));
+}
+
 static int
 open_debug_win(XPLMCommandRef ref, XPLMCommandPhase phase, void *refcon)
 {
@@ -184,11 +245,80 @@ open_debug_win(XPLMCommandRef ref, XPLMCommandPhase phase, void *refcon)
 	return (1);
 }
 
+static void
+wxr_config(float d_t, const wxr_conf_t *mode, mode_aux_info_t *aux)
+{
+	unsigned range = 0;
+	double tilt = 0, gain_ctl = 0.5;
+	double gain = 0;
+	bool_t power_on = B_TRUE, power_sw_on = B_TRUE, stby = B_FALSE;
+	geo_pos3_t pos =
+	    GEO_POS3(dr_getf(&drs.lat), dr_getf(&drs.lon), dr_getf(&drs.elev));
+	vect3_t orient =
+	    VECT3(dr_getf(&drs.pitch), dr_getf(&drs.hdg), dr_getf(&drs.roll));
+
+	DELAYED_DR_OP(&sys.power_dr,
+	    power_on = (dr_geti(&sys.power_dr.dr) != 0));
+	DELAYED_DR_OP(&sys.power_sw_dr,
+	    power_sw_on = (dr_geti(&sys.power_sw_dr.dr) != 0));
+
+	if (power_on && power_sw_on) {
+		double now = dr_getf(&drs.sim_time);
+		if (sys.power_on_time == 0)
+			sys.power_on_time = now;
+		stby = (now - sys.power_on_time < sys.power_on_delay);
+	} else {
+		stby = B_TRUE;
+		sys.power_on_time = 0;
+	}
+
+	intf->set_standby(wxr, stby);
+	intf->set_stab(wxr, aux->stab_lim.x, aux->stab_lim.y);
+	intf->set_acf_pos(wxr, pos, orient);
+
+	if (sys.num_screens > 0)
+		intf->set_brightness(wxr, sys.screens[0].brt / 0.75);
+
+	intf->set_colors(wxr, aux->colors, aux->num_colors);
+
+	DELAYED_DR_OP(&sys.range_dr, range = dr_geti(&sys.range_dr.dr));
+	range = clampi(range, 0, mode->num_ranges - 1);
+	delayed_ctl_set(&sys.range_ctl, range);
+	range = delayed_ctl_geti(&sys.range_ctl);
+	sys.range = mode->ranges[range];
+
+	if (intf->get_scale(wxr) != range) {
+		bool_t new_scale = (mode->ranges[range] !=
+		    mode->ranges[intf->get_scale(wxr)]);
+
+		if (new_scale)
+			intf->clear_screen(wxr);
+		intf->set_scale(wxr, range);
+		if (new_scale)
+			intf->clear_screen(wxr);
+	}
+
+	DELAYED_DR_OP(&sys.tilt_dr, tilt = dr_getf(&sys.tilt_dr.dr));
+	delayed_ctl_set(&sys.tilt_ctl, tilt);
+	tilt = delayed_ctl_get(&sys.tilt_ctl);
+	FILTER_IN_LIN(sys.tilt, tilt, d_t, sys.tilt_rate);
+	intf->set_ant_pitch(wxr, sys.tilt);
+
+	DELAYED_DR_OP(&sys.gain_dr,
+	    gain_ctl = dr_getf(&sys.gain_dr.dr));
+	if (gain_ctl == sys.gain_auto_pos)
+		gain = DFL_GAIN;
+	else
+		gain = wavg(MIN_GAIN, MAX_GAIN, clamp(gain_ctl, 0, 1));
+	intf->set_gain(wxr, gain);
+}
+
 static float
 floop_cb(float d_t, float elapsed, int counter, void *refcon)
 {
 	const wxr_conf_t *mode;
 	mode_aux_info_t *aux;
+	unsigned new_mode = 0;
 
 	UNUSED(elapsed);
 	UNUSED(counter);
@@ -212,8 +342,12 @@ floop_cb(float d_t, float elapsed, int counter, void *refcon)
 		sys.terr->set_nav_on(B_TRUE, B_TRUE);
 	}
 
-	DELAYED_DR_OP(&sys.mode_dr, sys.cur_mode = dr_geti(&sys.mode_dr.dr));
-	sys.cur_mode = MIN(sys.cur_mode, sys.num_modes - 1);
+	mutex_enter(&sys.mode_lock);
+	DELAYED_DR_OP(&sys.mode_dr, new_mode = dr_geti(&sys.mode_dr.dr));
+	new_mode = MIN(new_mode, sys.num_modes - 1);
+	delayed_ctl_set(&sys.mode_ctl, new_mode);
+	sys.cur_mode = delayed_ctl_geti(&sys.mode_ctl);
+	mutex_exit(&sys.mode_lock);
 
 	mode = &sys.modes[sys.cur_mode];
 	aux = &sys.aux[sys.cur_mode];
@@ -225,59 +359,19 @@ floop_cb(float d_t, float elapsed, int counter, void *refcon)
 		wxr = intf->init(mode, atmo);
 		ASSERT(wxr != NULL);
 	}
-	if (wxr != NULL) {
-		int range = 0;
-		double tilt = 0, gain_ctl = 0.5;
-		double gain = 0;
-		bool_t power_on = B_TRUE, stby = B_FALSE;
-
-		DELAYED_DR_OP(&sys.power_dr,
-		    power_on = (dr_geti(&sys.power_dr.dr) != 0));
-
-		if (power_on) {
-			double now = dr_getf(&drs.sim_time);
-			if (sys.power_on_time == 0)
-				sys.power_on_time = now;
-			stby = (now - sys.power_on_time < sys.power_on_delay);
-		} else {
-			stby = B_TRUE;
-			sys.power_on_time = 0;
-		}
-
-		intf->set_standby(wxr, stby);
-		intf->set_stab(wxr, aux->stab_lim.x, aux->stab_lim.y);
-
-		if (sys.num_screens > 0)
-			intf->set_brightness(wxr, sys.screens[0].brt / 0.75);
-
-		intf->set_colors(wxr, aux->colors, aux->num_colors);
-
-		DELAYED_DR_OP(&sys.range_dr,
-		    range = dr_geti(&sys.range_dr.dr));
-		range = clampi(range, 0, mode->num_ranges - 1);
-		intf->set_scale(wxr, range);
-
-		DELAYED_DR_OP(&sys.tilt_dr, tilt = dr_getf(&sys.tilt_dr.dr));
-		intf->set_ant_pitch(wxr, tilt);
-
-		DELAYED_DR_OP(&sys.gain_dr,
-		    gain_ctl = dr_getf(&sys.gain_dr.dr));
-		if (gain_ctl == sys.gain_auto_pos) {
-			gain = DFL_GAIN;
-		} else {
-			gain = wavg(MIN_GAIN, MAX_GAIN, clamp(gain_ctl, 0, 1));
-		}
-		intf->set_gain(wxr, gain);
-	}
+	if (wxr != NULL)
+		wxr_config(d_t, mode, aux);
 
 	for (unsigned i = 0; wxr != NULL && i < sys.num_screens; i++) {
-		bool_t power = B_TRUE;
+		bool_t power = B_TRUE, sw = B_TRUE;
 		wxr_scr_t *scr = &sys.screens[i];
 		double brt = 0.75;
 
 		DELAYED_DR_OP(&scr->power_dr,
 		    power = (dr_geti(&scr->power_dr.dr) != 0));
-		if (power) {
+		DELAYED_DR_OP(&scr->power_sw_dr,
+		    sw = (dr_geti(&scr->power_sw_dr.dr) != 0));
+		if (power && sw) {
 			double rate = (scr->power_on_rate /
 			    (1 + 50 * POW3(scr->scr_temp)));
 
@@ -301,6 +395,8 @@ floop_cb(float d_t, float elapsed, int counter, void *refcon)
 static int
 draw_cb(XPLMDrawingPhase phase, int before, void *refcon)
 {
+	egpws_render_t render = { .do_draw = B_FALSE };
+
 	UNUSED(phase);
 	UNUSED(before);
 	UNUSED(refcon);
@@ -308,15 +404,23 @@ draw_cb(XPLMDrawingPhase phase, int before, void *refcon)
 	if (dr_geti(&drs.panel_render_type) != PANEL_RENDER_TYPE_3D_LIT)
 		return (1);
 
+	/*
+	 * Even though we don't draw tiles, we need to let OpenGPWS when
+	 * to perform tile setup.
+	 */
+	sys.terr->terr_render(&render);
+
 	for (unsigned i = 0; wxr != NULL && i < sys.num_screens; i++) {
 		wxr_scr_t *scr = &sys.screens[i];
 		double center_x = scr->x + scr->w / 2;
+		double sz = scr->h * scr->underscan;
 
-		intf->draw(wxr, VECT2(center_x - scr->h, scr->y),
-		    VECT2(2 * scr->h, scr->h));
+		intf->draw(wxr, VECT2(center_x - sz, scr->y),
+		    VECT2(2 * sz, sz));
 		mt_cairo_render_draw(scr->mtcr, VECT2(scr->x, scr->y),
 		    VECT2(scr->w, scr->h));
 	}
+
 
 	return (1);
 }
@@ -342,19 +446,34 @@ draw_debug_win(XPLMWindowID win, void *refcon)
 }
 
 static void
-render_cb(cairo_t *cr, unsigned w, unsigned h, void *userinfo)
+align_text(cairo_t *cr, const char *buf, double x, double y, text_align_t how)
 {
-	wxr_scr_t *scr = userinfo;
+	cairo_text_extents_t te;
+
+	cairo_text_extents(cr, buf, &te);
+	switch (how) {
+	case TEXT_ALIGN_LEFT:
+		cairo_move_to(cr, x - te.x_bearing,
+		    y - te.height / 2 - te.y_bearing);
+		break;
+	case TEXT_ALIGN_CENTER:
+		cairo_move_to(cr, x - te.width / 2 - te.x_bearing,
+		    y - te.height / 2 - te.y_bearing);
+		break;
+	case TEXT_ALIGN_RIGHT:
+		cairo_move_to(cr, x - te.width - te.x_bearing,
+		    y - te.height / 2 - te.y_bearing);
+		break;
+	}
+}
+
+static void
+render_ui(cairo_t *cr, wxr_scr_t *scr)
+{
+	enum { FONT_SZ = 20, LINE_HEIGHT = 20, TOP_OFFSET = -FONT_SZ / 5 };
+	char buf[16];
 	double dashes[] = { 5, 5 };
-
-	cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
-	cairo_paint(cr);
-	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-
-	cairo_save(cr);
-
-	cairo_scale(cr, w / (double)WXR_RES_X, h / (double)WXR_RES_Y);
-	cairo_translate(cr, WXR_RES_X / 2, WXR_RES_Y);
+	char mode_name[16];
 
 	cairo_set_source_rgb(cr, CYAN_RGB(scr));
 	cairo_set_line_width(cr, 1);
@@ -374,6 +493,59 @@ render_cb(cairo_t *cr, unsigned w, unsigned h, void *userinfo)
 		cairo_stroke(cr);
 	}
 	cairo_set_dash(cr, NULL, 0, 0);
+
+	cairo_set_font_face(cr, fontmgr_get(FONTMGR_EFIS_FONT));
+	cairo_set_font_size(cr, FONT_SZ);
+
+	snprintf(buf, sizeof (buf), "RNG %3.0f", MET2NM(sys.range));
+	align_text(cr, buf, -WXR_RES_X / 2, -WXR_RES_Y + TOP_OFFSET,
+	    TEXT_ALIGN_LEFT);
+	cairo_show_text(cr, buf);
+
+	mutex_enter(&sys.mode_lock);
+	strlcpy(mode_name, sys.aux[sys.cur_mode].name, sizeof (mode_name));
+	mutex_exit(&sys.mode_lock);
+
+	align_text(cr, mode_name, -WXR_RES_X / 2, -WXR_RES_Y + TOP_OFFSET +
+	    LINE_HEIGHT, TEXT_ALIGN_LEFT);
+	cairo_show_text(cr, mode_name);
+
+	snprintf(buf, sizeof (buf), "MRK %3.0f", MET2NM(sys.range / 4));
+	align_text(cr, buf, WXR_RES_X / 2, -WXR_RES_Y + TOP_OFFSET,
+	    TEXT_ALIGN_RIGHT);
+	cairo_show_text(cr, buf);
+
+	if (wxr != NULL) {
+		double tilt = intf->get_ant_pitch(wxr);
+
+		if (tilt >= 0.05)
+			snprintf(buf, sizeof (buf), "%.1f\u2191", tilt);
+		else if (tilt <= -0.05)
+			snprintf(buf, sizeof (buf), "%.1f\u2193", ABS(tilt));
+		else
+			snprintf(buf, sizeof (buf), "0.0\u00a0");
+		align_text(cr, buf, WXR_RES_X / 2, -WXR_RES_Y + TOP_OFFSET +
+		    LINE_HEIGHT, TEXT_ALIGN_RIGHT);
+		cairo_show_text(cr, buf);
+	}
+}
+
+static void
+render_cb(cairo_t *cr, unsigned w, unsigned h, void *userinfo)
+{
+	wxr_scr_t *scr = userinfo;
+
+	cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cr);
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+	cairo_save(cr);
+
+	cairo_scale(cr, w / (double)WXR_RES_X, h / (double)WXR_RES_Y);
+	cairo_translate(cr, WXR_RES_X / 2, WXR_RES_Y);
+	cairo_scale(cr, scr->underscan, scr->underscan);
+
+	render_ui(cr, scr);
 
 	cairo_restore(cr);
 
@@ -457,12 +629,18 @@ parse_conf_file(const conf_t *conf)
 			memcpy(aux->base_colors, aux->colors,
 			    sizeof (aux->base_colors));
 		}
+
+		if (conf_get_str_v(conf, "mode/%d/name", &str, i))
+			strlcpy(aux->name, str, sizeof (aux->name));
 	}
 
 	if (conf_get_str(conf, "power_dr", &str))
 		strlcpy(sys.power_dr.name, str, sizeof (sys.power_dr.name));
+	if (conf_get_str(conf, "power_sw_dr", &str)) {
+		strlcpy(sys.power_sw_dr.name, str,
+		    sizeof (sys.power_sw_dr.name));
+	}
 	conf_get_d(conf, "power_on_delay", &sys.power_on_delay);
-		strlcpy(sys.power_dr.name, str, sizeof (sys.power_dr.name));
 	if (conf_get_str(conf, "range_dr", &str))
 		strlcpy(sys.range_dr.name, str, sizeof (sys.range_dr.name));
 	if (conf_get_str(conf, "tilt_dr", &str))
@@ -472,12 +650,18 @@ parse_conf_file(const conf_t *conf)
 	if (conf_get_str(conf, "gain_dr", &str))
 		strlcpy(sys.gain_dr.name, str, sizeof (sys.gain_dr.name));
 	conf_get_d(conf, "gain_auto_pos", &sys.gain_auto_pos);
+	conf_get_d(conf, "tilt_rate", &sys.tilt_rate);
+	sys.tilt_rate = MAX(sys.tilt_rate, 1);
+
+	conf_get_d(conf, "ctl/delay/mode", &sys.mode_ctl.delay);
+	conf_get_d(conf, "ctl/delay/tilt", &sys.tilt_ctl.delay);
+	conf_get_d(conf, "ctl/delay/range", &sys.range_ctl.delay);
 
 	conf_get_i(conf, "num_screens", (int *)&sys.num_screens);
 	sys.num_screens = clampi(sys.num_screens, 0, MAX_SCREENS);
 	for (unsigned i = 0; i < sys.num_screens; i++) {
 		wxr_scr_t *scr = &sys.screens[i];
-		double fps = 15;
+		double fps = 10;
 		const char *str;
 
 		conf_get_d_v(conf, "scr/%d/x", &scr->x, i);
@@ -485,6 +669,9 @@ parse_conf_file(const conf_t *conf)
 		conf_get_d_v(conf, "scr/%d/w", &scr->w, i);
 		conf_get_d_v(conf, "scr/%d/h", &scr->h, i);
 		conf_get_d_v(conf, "scr/%d/fps", &fps, i);
+
+		scr->underscan = 1.0;
+		conf_get_d_v(conf, "scr/%d/underscan", &scr->underscan, i);
 
 		if (conf_get_str_v(conf, "scr/%d/brt_dr", &str, i)) {
 			strlcpy(scr->brt_dr.name, str,
@@ -494,6 +681,10 @@ parse_conf_file(const conf_t *conf)
 		if (conf_get_str_v(conf, "scr/%d/power_dr", &str, i)) {
 			strlcpy(scr->power_dr.name, str,
 			    sizeof (scr->power_dr.name));
+		}
+		if (conf_get_str_v(conf, "scr/%d/power_sw_dr", &str, i)) {
+			strlcpy(scr->power_sw_dr.name, str,
+			    sizeof (scr->power_sw_dr.name));
 		}
 		conf_get_d_v(conf, "scr/%d/power_on_rate",
 		    &scr->power_on_rate, i);
@@ -518,6 +709,7 @@ sa_init(const conf_t *conf)
 
 	memset(&sys, 0, sizeof (sys));
 	parse_conf_file(conf);
+	mutex_init(&sys.mode_lock);
 
 	open_debug_cmd = XPLMCreateCommand("openwxr/standalone_window",
 	    "Open OpenWXR standalone mode debug window");
@@ -542,8 +734,14 @@ sa_init(const conf_t *conf)
 	XPLMSendMessageToPlugin(openwxr, OPENWXR_ATMO_XP11_SET_EFIS,
 	    sys.efis_xywh);
 
+	fdr_find(&drs.lat, "sim/flightmodel/position/latitude");
+	fdr_find(&drs.lon, "sim/flightmodel/position/longitude");
+	fdr_find(&drs.elev, "sim/flightmodel/position/elevation");
 	fdr_find(&drs.sim_time, "sim/time/total_running_time_sec");
 	fdr_find(&drs.panel_render_type, "sim/graphics/view/panel_render_type");
+	fdr_find(&drs.hdg, "sim/flightmodel/position/psi");
+	fdr_find(&drs.pitch, "sim/flightmodel/position/theta");
+	fdr_find(&drs.roll, "sim/flightmodel/position/phi");
 
 	XPLMRegisterFlightLoopCallback(floop_cb, -1, NULL);
 	XPLMRegisterDrawCallback(draw_cb, xplm_Phase_Gauges, 0, NULL);
@@ -582,4 +780,6 @@ sa_fini(void)
 
 	XPLMUnregisterFlightLoopCallback(floop_cb, NULL);
 	XPLMUnregisterDrawCallback(draw_cb, xplm_Phase_Gauges, 0, NULL);
+
+	mutex_destroy(&sys.mode_lock);
 }

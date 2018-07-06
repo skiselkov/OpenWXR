@@ -38,9 +38,11 @@
 
 #include "atmo_xp11.h"
 #include "dbg_log.h"
+#include "fontmgr.h"
 #include <openwxr/xplane_api.h>
 #include "standalone.h"
 #include "wxr.h"
+#include "xplane.h"
 
 #define	PLUGIN_NAME		"OpenWXR by Saso Kiselkov"
 #define	PLUGIN_DESCRIPTION \
@@ -207,25 +209,32 @@ PLUGIN_API int
 XPluginEnable(void)
 {
 	conf_t *conf = load_config_file();
+	bool_t standalone = B_FALSE;
 
-	if (conf != NULL) {
-		bool_t standalone = B_FALSE;
+	if (conf == NULL)
+		return (0);
 
-		conf_get_b(conf, "standalone", &standalone);
-		if (standalone && !sa_init(conf)) {
-			conf_free(conf);
-			return (0);
-		}
-		conf_free(conf);
+	conf_get_b(conf, "standalone", &standalone);
+	if (standalone) {
+		if (!fontmgr_init(xpdir, plugindir))
+			goto errout;
+		if (!sa_init(conf))
+			goto errout;
 	}
 
+	conf_free(conf);
 	return (1);
+errout:
+	conf_free(conf);
+	XPluginDisable();
+	return (0);
 }
 
 PLUGIN_API void
 XPluginDisable(void)
 {
 	sa_fini();
+	fontmgr_fini();
 }
 
 PLUGIN_API void
