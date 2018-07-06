@@ -87,6 +87,7 @@ typedef struct {
 	double			underscan;
 	struct wxr_sys_s	*sys;
 	mt_cairo_render_t	*mtcr;
+	double			fps;
 
 	double			power;
 	double			power_on_rate;
@@ -95,6 +96,7 @@ typedef struct {
 
 	delayed_dr_t		power_dr;
 	delayed_dr_t		power_sw_dr;
+	delayed_ctl_t		power_sw_ctl;
 	delayed_dr_t		brt_dr;
 	double			scr_temp;
 } wxr_scr_t;
@@ -129,6 +131,7 @@ struct wxr_sys_s {
 	delayed_dr_t		range_dr;
 	delayed_dr_t		gain_dr;
 
+	delayed_ctl_t		power_sw_ctl;
 	delayed_ctl_t		mode_ctl;
 	delayed_ctl_t		range_ctl;
 	delayed_ctl_t		tilt_ctl;
@@ -261,6 +264,8 @@ wxr_config(float d_t, const wxr_conf_t *mode, mode_aux_info_t *aux)
 	    power_on = (dr_geti(&sys.power_dr.dr) != 0));
 	DELAYED_DR_OP(&sys.power_sw_dr,
 	    power_sw_on = (dr_geti(&sys.power_sw_dr.dr) != 0));
+	delayed_ctl_set(&sys.power_sw_ctl, power_sw_on);
+	power_sw_on = delayed_ctl_geti(&sys.power_sw_ctl);
 
 	if (power_on && power_sw_on) {
 		double now = dr_getf(&drs.sim_time);
@@ -371,6 +376,8 @@ floop_cb(float d_t, float elapsed, int counter, void *refcon)
 		    power = (dr_geti(&scr->power_dr.dr) != 0));
 		DELAYED_DR_OP(&scr->power_sw_dr,
 		    sw = (dr_geti(&scr->power_sw_dr.dr) != 0));
+		delayed_ctl_set(&scr->power_sw_ctl, sw);
+		sw = delayed_ctl_geti(&scr->power_sw_ctl);
 		if (power && sw) {
 			double rate = (scr->power_on_rate /
 			    (1 + 50 * POW3(scr->scr_temp)));
@@ -381,6 +388,10 @@ floop_cb(float d_t, float elapsed, int counter, void *refcon)
 			FILTER_IN(scr->scr_temp, 0, d_t, 600);
 			FILTER_IN(scr->power, 0, d_t, scr->power_off_rate);
 		}
+		if (scr->power < 0.01 || scr->power > 0.99)
+			mt_cairo_render_set_fps(scr->mtcr, scr->fps);
+		else
+			mt_cairo_render_set_fps(scr->mtcr, 20);
 
 		DELAYED_DR_OP(&scr->brt_dr, brt = dr_getf(&scr->brt_dr.dr));
 		if (brt > scr->brt)
@@ -653,6 +664,7 @@ parse_conf_file(const conf_t *conf)
 	conf_get_d(conf, "tilt_rate", &sys.tilt_rate);
 	sys.tilt_rate = MAX(sys.tilt_rate, 1);
 
+	conf_get_d(conf, "ctl/delay/power_sw", &sys.power_sw_ctl.delay);
 	conf_get_d(conf, "ctl/delay/mode", &sys.mode_ctl.delay);
 	conf_get_d(conf, "ctl/delay/tilt", &sys.tilt_ctl.delay);
 	conf_get_d(conf, "ctl/delay/range", &sys.range_ctl.delay);
@@ -661,14 +673,18 @@ parse_conf_file(const conf_t *conf)
 	sys.num_screens = clampi(sys.num_screens, 0, MAX_SCREENS);
 	for (unsigned i = 0; i < sys.num_screens; i++) {
 		wxr_scr_t *scr = &sys.screens[i];
-		double fps = 10;
 		const char *str;
 
 		conf_get_d_v(conf, "scr/%d/x", &scr->x, i);
 		conf_get_d_v(conf, "scr/%d/y", &scr->y, i);
 		conf_get_d_v(conf, "scr/%d/w", &scr->w, i);
 		conf_get_d_v(conf, "scr/%d/h", &scr->h, i);
-		conf_get_d_v(conf, "scr/%d/fps", &fps, i);
+
+		conf_get_d_v(conf, "scr/%d/fps", &scr->fps, i);
+		scr->fps = clamp(scr->fps, 0.1, 100);
+
+		conf_get_d_v(conf, "ctl/delay/scr/%d/power_sw",
+		    &scr->power_sw_ctl.delay, i);
 
 		scr->underscan = 1.0;
 		conf_get_d_v(conf, "scr/%d/underscan", &scr->underscan, i);
@@ -693,8 +709,8 @@ parse_conf_file(const conf_t *conf)
 		scr->power_on_rate = MAX(scr->power_on_rate, 0.05);
 		scr->power_off_rate = MAX(scr->power_off_rate, 0.05);
 
-		scr->mtcr = mt_cairo_render_init(scr->w, scr->h, fps, NULL,
-		    render_cb, NULL, scr);
+		scr->mtcr = mt_cairo_render_init(scr->w, scr->h, scr->fps,
+		    NULL, render_cb, NULL, scr);
 		scr->sys = &sys;
 	}
 }
