@@ -553,7 +553,7 @@ transfer_new_efis_frame(void)
 	glUniform1i(glGetUniformLocation(xp11_atmo.smooth_prog, "tex"), 0);
 	glUniform2f(glGetUniformLocation(xp11_atmo.smooth_prog, "tex_sz"),
 	    EFIS_WIDTH, EFIS_HEIGHT);
-	glUniform1f(glGetUniformLocation(xp11_atmo.smooth_prog, "smooth"),
+	glUniform1f(glGetUniformLocation(xp11_atmo.smooth_prog, "smooth_val"),
 	    WX_SMOOTH_RNG / range);
 	glutils_draw_quads(&xp11_atmo.efis_quads, xp11_atmo.smooth_prog);
 
@@ -706,6 +706,8 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
 	lacf_free(path);
 	lacf_free(path2);
+	if (xp11_atmo.cleanup_prog)
+		goto errout;
 
 	path = mkpathname(xpdir, plugindir, "data", "generic.vert", NULL);
 	path2 = mkpathname(xpdir, plugindir, "data", "smooth.frag", NULL);
@@ -713,12 +715,17 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
 	lacf_free(path);
 	lacf_free(path2);
+	if (xp11_atmo.smooth_prog == 0)
+		goto errout;
 
 	mutex_init(&xp11_atmo.lock);
 
 	XPLMRegisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);
 
 	return (&atmo);
+errout:
+	atmo_xp11_fini();
+	return (NULL);
 }
 
 void

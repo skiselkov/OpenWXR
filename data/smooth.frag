@@ -20,7 +20,7 @@
 
 uniform sampler2D	tex;
 uniform vec2		tex_sz;
-uniform float		smooth;
+uniform float		smooth_val;
 
 void
 main(void)
@@ -30,8 +30,8 @@ main(void)
 
 	for (int i = -2; i <= 2; i += 1) {
 		for (int j = -2; j <= 2; j += 1) {
-			intens += texture2D(tex, vec2(pos.x + i * smooth,
-			    pos.y + j * smooth));
+			intens += texture2D(tex, vec2(pos.x + i * smooth_val,
+			    pos.y + j * smooth_val));
 		}
 	}
 
