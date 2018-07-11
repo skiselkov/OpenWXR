@@ -643,11 +643,13 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 	inited = B_TRUE;
 
 	memset(&xp11_atmo, 0, sizeof (xp11_atmo));
+	mutex_init(&xp11_atmo.lock);
 
 	debug_cmd = XPLMCreateCommand("openwxr/debug_atmo_xp11",
 	    "Dump XP11 screenshot into X-Plane folder");
 	ASSERT(debug_cmd != NULL);
 	XPLMRegisterCommandHandler(debug_cmd, debug_cmd_handler, 0, NULL);
+	XPLMRegisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);
 
 	for (int i = 0; i < 3; i++) {
 		fdr_find(&drs.cloud_type[i],
@@ -706,7 +708,7 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
 	lacf_free(path);
 	lacf_free(path2);
-	if (xp11_atmo.cleanup_prog)
+	if (xp11_atmo.cleanup_prog == 0)
 		goto errout;
 
 	path = mkpathname(xpdir, plugindir, "data", "generic.vert", NULL);
@@ -717,10 +719,6 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 	lacf_free(path2);
 	if (xp11_atmo.smooth_prog == 0)
 		goto errout;
-
-	mutex_init(&xp11_atmo.lock);
-
-	XPLMRegisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);
 
 	return (&atmo);
 errout:
@@ -736,6 +734,7 @@ atmo_xp11_fini(void)
 	inited = B_FALSE;
 
 	XPLMUnregisterCommandHandler(debug_cmd, debug_cmd_handler, 0, NULL);
+	XPLMUnregisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);
 
 	if (xp11_atmo.pbo != 0)
 		glDeleteBuffers(1, &xp11_atmo.pbo);
@@ -750,7 +749,6 @@ atmo_xp11_fini(void)
 	glutils_destroy_quads(&xp11_atmo.efis_quads);
 
 	mutex_destroy(&xp11_atmo.lock);
-	XPLMUnregisterDrawCallback(update_cb, xplm_Phase_Gauges, 0, NULL);
 }
 
 void
