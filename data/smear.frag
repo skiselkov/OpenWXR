@@ -52,7 +52,6 @@ main()
 		float t1 = sin(tex_coord.t * 16.1803);
 		float t2 = sin(tex_coord.t * 95.828);
 		float smear_t = (smear_mult * t1) / tex_size.y;
-		vec4 sample;
 
 		/*
 		 * Yes the smear components are reversed here, the 't'

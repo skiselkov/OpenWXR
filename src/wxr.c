@@ -471,6 +471,7 @@ wxr_init(const wxr_conf_t *conf, const atmo_t *atmo)
 	wxr->conf = conf;
 	wxr->atmo = atmo;
 	wxr->gain = 1.0;
+	wxr->brt = 1.0;
 	/*
 	 * 4 vertices per quad, 2 coords per vertex
 	 */
