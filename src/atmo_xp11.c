@@ -589,7 +589,13 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 	if (dr_geti(&drs.render_type) != XPLANE_RENDER_GAUGES_3D_LIT)
 		return (1);
 
+#if	!APL
+	/*
+	 * On Apple, this can break 3rd party plugins such as SASL, which
+	 * use legacy OpenGL 2.x drawing operations.
+	 */
 	glutils_disable_all_client_state();
+#endif	/* !APL */
 
 	mutex_enter(&xp11_atmo.lock);
 

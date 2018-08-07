@@ -432,7 +432,6 @@ draw_cb(XPLMDrawingPhase phase, int before, void *refcon)
 		    VECT2(scr->w, scr->h));
 	}
 
-
 	return (1);
 }
 
