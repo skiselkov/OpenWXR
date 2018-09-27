@@ -399,11 +399,11 @@ wxr_worker(void *userinfo)
 				    elev_max, B_FALSE) / 5;
 				fract_hit = clamp(fract_hit, 0, 1);
 				ground_absorb[k] = ((1 - energy_spent[k]) *
-				    fract_hit) * sample_sz_rat;
+				    fract_hit) * sample_sz_rat * 0.1;
 				ground_return[k] = ((1 - energy_spent[k]) *
 				    fract_hit * (fract_dir + 0.8) /
 				    NUM_VERT_SECTORS) * GROUND_RETURN_MULT *
-				    (1 - wxr->tp.out_water[j] * 0.89);
+				    (1 - wxr->tp.out_water[j] * 0.95);
 			}
 
 			for (int k = 0; k < NUM_VERT_SECTORS; k++) {
