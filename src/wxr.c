@@ -1084,14 +1084,27 @@ wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num)
 bool_t
 wxr_reload_gl_progs(wxr_t *wxr)
 {
-	char *vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
-	    "smear.vert", NULL);
-	char *frag = mkpathname(get_xpdir(), get_plugindir(), "data",
-	    "smear.frag", NULL);
-	GLuint prog = shader_prog_from_file("smear", vtx, frag,
-	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
-	lacf_free(vtx);
-	lacf_free(frag);
+	GLuint prog;
+
+	if (GLEW_VERSION_4_2) {
+		char *vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
+		    "smear.vert", NULL);
+		char *frag = mkpathname(get_xpdir(), get_plugindir(), "data",
+		    "smear.frag420", NULL);
+		prog = shader_prog_from_file("smear", vtx, frag,
+		    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
+		lacf_free(vtx);
+		lacf_free(frag);
+	} else {
+		char *vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
+		    "smear.vert", NULL);
+		char *frag = mkpathname(get_xpdir(), get_plugindir(), "data",
+		    "smear.frag", NULL);
+		prog = shader_prog_from_file("smear", vtx, frag,
+		    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
+		lacf_free(vtx);
+		lacf_free(frag);
+	}
 
 	if (prog == 0)
 		return (B_FALSE);

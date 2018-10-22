@@ -16,11 +16,10 @@
  * Copyright 2018 Saso Kiselkov. All rights reserved.
  */
 
-#version 120
+#version 130
 
-#ifdef GL_EXT_gpu_shader4
-#extension GL_EXT_gpu_shader4: enable
-#endif
+#define	textureSize2D	textureSize
+#define	texture2D	texture
 
 uniform	sampler2D	tex;
 uniform	float		smear_mult;
