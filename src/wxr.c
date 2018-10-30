@@ -141,24 +141,32 @@ advance_ant_pos(wxr_t *wxr)
 	 * when in vertical mode).
 	 */
 	if (wxr->scan_right) {
-		if (!wxr->vert_mode)
-			wxr->ant_pos++;
-		else
-			wxr->ant_pos_vert++;
+		if (!wxr->vert_mode) {
+			if (wxr->ant_pos < wxr->conf->res_x - 1)
+				wxr->ant_pos++;
+		} else {
+			if (wxr->ant_pos_vert < wxr->conf->res_x - 1)
+				wxr->ant_pos_vert++;
+		}
 		if ((!wxr->vert_mode && (wxr->ant_pos == wxr->conf->res_x - 1 ||
 		    wxr->ant_pos >= wxr->azi_lim_right)) || (wxr->vert_mode &&
 		    wxr->ant_pos_vert == wxr->conf->res_x - 1))
 			wxr->scan_right = B_FALSE;
 	} else {
-		if (!wxr->vert_mode)
-			wxr->ant_pos--;
-		else
-			wxr->ant_pos_vert--;
+		if (!wxr->vert_mode) {
+			if (wxr->ant_pos != 0)
+				wxr->ant_pos--;
+		} else {
+			if (wxr->ant_pos_vert != 0)
+				wxr->ant_pos_vert--;
+		}
 		if ((!wxr->vert_mode &&
 		    (wxr->ant_pos == 0 || wxr->ant_pos <= wxr->azi_lim_left)) ||
 		    (wxr->vert_mode && wxr->ant_pos_vert == 0))
 			wxr->scan_right = B_TRUE;
 	}
+	ASSERT3U(wxr->ant_pos, <, wxr->conf->res_x);
+	ASSERT3U(wxr->ant_pos_vert, <, wxr->conf->res_x);
 }
 
 static void
