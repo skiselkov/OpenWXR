@@ -19,9 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <GL/glew.h>
-#include <cglm/cglm.h>
-
 #include <XPLMGraphics.h>
 #include <XPLMPlugin.h>
 
@@ -29,6 +26,7 @@
 
 #include <acfutils/assert.h>
 #include <acfutils/crc64.h>
+#include <acfutils/glew.h>
 #include <acfutils/glutils.h>
 #include <acfutils/helpers.h>
 #include <acfutils/math.h>
@@ -38,6 +36,8 @@
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
 #include <acfutils/worker.h>
+
+#include <cglm/cglm.h>
 
 #include "wxr.h"
 #include "xplane.h"

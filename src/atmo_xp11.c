@@ -19,15 +19,13 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <GL/glew.h>
-#include <cglm/cglm.h>
-
 #include <XPLMGraphics.h>
 #include <XPLMDisplay.h>
 
 #include <acfutils/assert.h>
 #include <acfutils/dr.h>
 #include <acfutils/geom.h>
+#include <acfutils/glew.h>
 #include <acfutils/glutils.h>
 #include <acfutils/helpers.h>
 #include <acfutils/math.h>
@@ -37,6 +35,8 @@
 #include <acfutils/shader.h>
 #include <acfutils/thread.h>
 #include <acfutils/time.h>
+
+#include <cglm/cglm.h>
 
 #include "atmo_xp11.h"
 #include "xplane.h"

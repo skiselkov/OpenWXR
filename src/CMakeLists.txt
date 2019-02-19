@@ -46,7 +46,7 @@ endif()
 
 include_directories(openwxr PUBLIC
     "${LIBACFUTILS}/src"
-    "${LIBACFUTILS}/glew"
+    "${LIBACFUTILS}/glew/glew-1.13.0-linux-64/install/include"
     "${LIBACFUTILS}/cglm/cglm-0.4.1/include"
     "../api"
     "${OPENGPWS}/api")

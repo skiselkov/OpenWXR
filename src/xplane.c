@@ -21,8 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <GL/glew.h>
-
 #include <XPLMPlugin.h>
 #include <XPLMProcessing.h>
 #include <XPLMUtilities.h>
@@ -31,6 +29,7 @@
 #include <acfutils/core.h>
 #include <acfutils/crc64.h>
 #include <acfutils/dr.h>
+#include <acfutils/glew.h>
 #include <acfutils/helpers.h>
 #include <acfutils/log.h>
 #include <acfutils/time.h>
