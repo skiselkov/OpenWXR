@@ -30,7 +30,10 @@ rm -rf "$OUTPUT_DIR" "$OUTPUT_DIR.zip"
 mkdir -p "$OUTPUT_DIR"
 
 ( cd qmake && ./build ) || exit 1
-( cd data && make ) || exit 1
+
+if [[ $(uname) = Linux ]]; then
+	( cd data && make ) || exit 1
+fi
 
 if [[ $(uname) = "Linux" ]]; then
 	$INSTALL -- "qmake/output/lin_x64/${OUTPUT_DIR}.xpl" \
