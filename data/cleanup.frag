@@ -16,15 +16,17 @@
  * Copyright 2018 Saso Kiselkov. All rights reserved.
  */
 
-#version 120
+#version 460
 
-uniform sampler2D	tex;
-uniform vec2		tex_sz;
+layout(location = 10) uniform sampler2D	tex;
+layout(location = 11) uniform vec2	tex_sz;
+
+layout(location = 0) out vec4		color_out;
 
 float
 compute_intens(vec2 pos)
 {
-	vec4 color = texture2D(tex, pos);
+	vec4 color = texture(tex, pos);
 
 	if (color.b > 0.1) {
 		if (color.a < 0.95)
@@ -59,5 +61,5 @@ void
 main(void)
 {
 	vec2 pos = gl_FragCoord.xy / tex_sz;
-	gl_FragColor = vec4(compute_intens(pos), 0, 0, 1);
+	color_out = vec4(compute_intens(pos), 0, 0, 1);
 }

@@ -16,11 +16,13 @@
  * Copyright 2018 Saso Kiselkov. All rights reserved.
  */
 
-#version 120
+#version 460
 
-uniform sampler2D	tex;
-uniform vec2		tex_sz;
-uniform float		smooth_val;
+layout(location = 10) uniform sampler2D	tex;
+layout(location = 11) uniform vec2	tex_sz;
+layout(location = 12) uniform float	smooth_val;
+
+layout(location = 0) out vec4		color_out;
 
 void
 main(void)
@@ -30,10 +32,10 @@ main(void)
 
 	for (int i = -2; i <= 2; i += 1) {
 		for (int j = -2; j <= 2; j += 1) {
-			intens += texture2D(tex, vec2(pos.x + i * smooth_val,
+			intens += texture(tex, vec2(pos.x + i * smooth_val,
 			    pos.y + j * smooth_val));
 		}
 	}
 
-	gl_FragColor = intens / 25.0;
+	color_out = intens / 25.0;
 }

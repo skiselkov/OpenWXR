@@ -39,6 +39,7 @@
 
 #include <cglm/cglm.h>
 
+#include "glpriv.h"
 #include "wxr.h"
 #include "xplane.h"
 
@@ -53,6 +54,9 @@
 #define	PANEL_TEX_SZ		2048		/* pixels */
 #define	SCR_CLEAR_DELAY		200000		/* microseconds */
 
+typedef struct {
+} wxr_prog_loc_t;
+
 struct wxr_s {
 	const wxr_conf_t	*conf;
 	const atmo_t		*atmo;
@@ -65,7 +69,14 @@ struct wxr_s {
 	GLuint			shadow_pbo;
 	GLsync			upload_sync;
 	uint64_t		last_upload;
-	GLuint			wxr_prog;
+	GLint			wxr_prog;
+	struct {
+		GLint		pvm;
+		GLint		tex;
+		GLint		tex_size;
+		GLint		smear_mult;
+		GLint		brt;
+	} wxr_prog_loc;
 	glutils_quads_t		wxr_scr_quads;
 	vect2_t			draw_pos;
 	vect2_t			draw_size;
@@ -108,6 +119,14 @@ struct wxr_s {
 	const egpws_intf_t	*terr;
 
 	worker_t		wk;
+};
+
+static const shader_info_t smear_vert_info = { .filename = "smear.vert.spv" };
+static const shader_info_t smear_frag_info = { .filename = "smear.frag.spv" };
+static const shader_prog_info_t smear_prog_info = {
+    .progname = "wxr_smear",
+    .vert = &smear_vert_info,
+    .frag = &smear_frag_info
 };
 
 static void
@@ -744,6 +763,15 @@ out:
 }
 
 static void
+setup_tex_common(GLenum target)
+{
+	glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+static void
 wxr_bind_tex(wxr_t *wxr, bool_t shadow_tex)
 {
 	if (wxr->pbo == 0) {
@@ -765,16 +793,9 @@ wxr_bind_tex(wxr_t *wxr, bool_t shadow_tex)
 
 		for (int i = 0; i < 2; i++) {
 			XPLMBindTexture2d(wxr->tex[i], GL_TEXTURE_2D);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-			    GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-			    GL_LINEAR);
-
+			setup_tex_common(GL_TEXTURE_2D);
 			XPLMBindTexture2d(wxr->shadow_tex[i], GL_TEXTURE_2D);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-			    GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-			    GL_LINEAR);
+			setup_tex_common(GL_TEXTURE_2D);
 		}
 
 		glActiveTexture(GL_TEXTURE0);
@@ -878,14 +899,13 @@ wxr_draw_arc(wxr_t *wxr, vect2_t pos, vect2_t size)
 
 	glutils_vp2pvm(pvm);
 
-	glUniformMatrix4fv(glGetUniformLocation(wxr->wxr_prog, "pvm"),
-	    1, GL_FALSE, pvm);
-	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
-	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
+	glUniformMatrix4fv(wxr->wxr_prog_loc.pvm, 1, GL_FALSE, pvm);
+	glUniform1i(wxr->wxr_prog_loc.tex, 0);
+	glUniform2f(wxr->wxr_prog_loc.tex_size,
 	    wxr->conf->res_x, wxr->conf->res_y);
-	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "smear_mult"),
+	glUniform1f(wxr->wxr_prog_loc.smear_mult,
 	    wxr->vert_mode ? wxr->conf->smear.y : wxr->conf->smear.x);
-	glUniform1f(glGetUniformLocation(wxr->wxr_prog, "brt"), wxr->brt);
+	glUniform1f(wxr->wxr_prog_loc.brt, wxr->brt);
 
 	glutils_draw_quads(&wxr->wxr_scr_quads, wxr->wxr_prog);
 
@@ -901,10 +921,9 @@ wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 
 	glutils_vp2pvm(pvm);
 
-	glUniformMatrix4fv(glGetUniformLocation(wxr->wxr_prog, "pvm"),
-	    1, GL_FALSE, pvm);
-	glUniform1i(glGetUniformLocation(wxr->wxr_prog, "tex"), 0);
-	glUniform2f(glGetUniformLocation(wxr->wxr_prog, "tex_size"),
+	glUniformMatrix4fv(wxr->wxr_prog_loc.pvm, 1, GL_FALSE, pvm);
+	glUniform1i(wxr->wxr_prog_loc.tex, 0);
+	glUniform2f(wxr->wxr_prog_loc.tex_size,
 	    wxr->conf->res_x, wxr->conf->res_y);
 
 	if (!VECT2_EQ(pos, wxr->draw_pos) || !VECT2_EQ(size, wxr->draw_size) ||
@@ -941,8 +960,8 @@ wxr_draw_square(wxr_t *wxr, vect2_t pos, vect2_t size)
 void
 wxr_draw(wxr_t *wxr, vect2_t pos, vect2_t size)
 {
-	glGetError();
 	XPLMSetGraphicsState(0, 1, 0, 1, 1, 1, 1);
+	glutils_reset_errors();
 	wxr_bind_tex(wxr, B_FALSE);
 	if (wxr->conf->disp_type == WXR_DISP_ARC) {
 		wxr_draw_arc(wxr, pos, size);
@@ -1092,34 +1111,16 @@ wxr_set_colors(wxr_t *wxr, const wxr_color_t *colors, size_t num)
 bool_t
 wxr_reload_gl_progs(wxr_t *wxr)
 {
-	GLuint prog;
-
-	if (GLEW_VERSION_4_2) {
-		char *vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
-		    "smear.vert", NULL);
-		char *frag = mkpathname(get_xpdir(), get_plugindir(), "data",
-		    "smear.frag420", NULL);
-		prog = shader_prog_from_file("smear", vtx, frag,
-		    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
-		lacf_free(vtx);
-		lacf_free(frag);
-	} else {
-		char *vtx = mkpathname(get_xpdir(), get_plugindir(), "data",
-		    "smear.vert", NULL);
-		char *frag = mkpathname(get_xpdir(), get_plugindir(), "data",
-		    "smear.frag", NULL);
-		prog = shader_prog_from_file("smear", vtx, frag,
-		    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
-		lacf_free(vtx);
-		lacf_free(frag);
-	}
-
-	if (prog == 0)
+	if (!reload_gl_prog(&wxr->wxr_prog, &smear_prog_info))
 		return (B_FALSE);
 
-	if (wxr->wxr_prog != 0)
-		glDeleteProgram(wxr->wxr_prog);
-	wxr->wxr_prog = prog;
+	wxr->wxr_prog_loc.pvm = glGetUniformLocation(wxr->wxr_prog, "pvm");
+	wxr->wxr_prog_loc.tex = glGetUniformLocation(wxr->wxr_prog, "tex");
+	wxr->wxr_prog_loc.tex_size =
+	    glGetUniformLocation(wxr->wxr_prog, "tex_size");
+	wxr->wxr_prog_loc.smear_mult =
+	    glGetUniformLocation(wxr->wxr_prog, "smear_mult");
+	wxr->wxr_prog_loc.brt = glGetUniformLocation(wxr->wxr_prog, "brt");
 
 	return (B_TRUE);
 }

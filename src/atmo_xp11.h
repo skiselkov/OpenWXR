@@ -25,7 +25,7 @@
 extern "C" {
 #endif
 
-atmo_t *atmo_xp11_init(const char *xpdir, const char *plugindir);
+atmo_t *atmo_xp11_init(void);
 void atmo_xp11_fini(void);
 
 void atmo_xp11_set_efis_pos(unsigned x, unsigned y, unsigned w, unsigned h);

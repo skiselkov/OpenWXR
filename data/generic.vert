@@ -16,14 +16,14 @@
  * Copyright 2018 Saso Kiselkov. All rights reserved.
  */
 
-#version 120
+#version 460
 
-uniform mat4	pvm;
+layout(location = 0) uniform mat4	pvm;
 
-attribute vec3	vtx_pos;
-attribute vec2	vtx_tex0;
+layout(location = 0) in vec3		vtx_pos;
+layout(location = 1) in vec2		vtx_tex0;
 
-varying vec2	tex_coord;
+layout(location = 0) out vec2		tex_coord;
 
 void
 main(void)

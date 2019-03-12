@@ -16,33 +16,35 @@
  * Copyright 2018 Saso Kiselkov. All rights reserved.
  */
 
-#version 120
+#version 460
 
 #ifdef GL_EXT_gpu_shader4
 #extension GL_EXT_gpu_shader4: enable
 #endif
 
-uniform	sampler2D	tex;
-uniform	float		smear_mult;
-uniform float		brt;
+layout(location = 10) uniform sampler2D	tex;
+layout(location = 11) uniform float	smear_mult;
+layout(location = 12) uniform float	brt;
 
-varying	vec2		tex_coord;
+layout(location = 0) in vec2		tex_coord;
 
-float
-color(float c)
+layout(location = 0) out vec4		color_out;
+
+vec3
+brt_adjust(vec3 c)
 {
-	return (c * (pow(4.0, brt) / 4.0));
+	float f = pow(4.0, brt) / 4.0;
+	return (c * vec3(f));
 }
 
 void
 main()
 {
-	vec4 pixel = texture2D(tex, tex_coord);
-	vec2 tex_size = textureSize2D(tex, 0);
-	vec4 out_color;
+	vec4 pixel = texture(tex, tex_coord);
+	vec2 tex_size = textureSize(tex, 0);
 
 	if (pixel.r == pixel.g && pixel.r == pixel.b) {
-		out_color = pixel;
+		color_out = pixel;
 	} else {
 		float s1 = sin(tex_coord.s * 16.1803);
 		float s2 = sin(tex_coord.s * 95.828);
@@ -59,12 +61,11 @@ main()
 		/*
 		 * Yes the smear components are reversed here, the 't'
 		 * component is smeared using smear_s and vice versa.
-		 * Gives us the look we jaggedy-edged look we want.
+		 * Gives us the jaggedy-edged look we want.
 		 */
-		out_color = texture2D(tex, vec2(
-		    clamp(tex_coord.s + smear_t, 0.0, 1.0),
+		color_out = texture(tex, vec2(tex_coord.s,
 		    clamp(tex_coord.t + smear_s, 0.0, 1.0)));
 	}
-	gl_FragColor = vec4(color(out_color.r), color(out_color.g),
-	    color(out_color.b), out_color.a);
+
+	color_out = vec4(brt_adjust(color_out.rgb), color_out.a);
 }

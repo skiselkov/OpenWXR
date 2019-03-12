@@ -186,7 +186,7 @@ XPluginStart(char *name, char *sig, char *desc)
 	 * Must go ahead of XPluginEnable to always have an atmosphere
 	 * ready for when external avionics start creating wxr_t instances.
 	 */
-	atmo = atmo_xp11_init(xpdir, plugindir);
+	atmo = atmo_xp11_init();
 	if (atmo == NULL)
 		return (0);
 

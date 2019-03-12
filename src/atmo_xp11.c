@@ -23,6 +23,7 @@
 #include <XPLMDisplay.h>
 
 #include <acfutils/assert.h>
+#include <acfutils/crc64.h>
 #include <acfutils/dr.h>
 #include <acfutils/geom.h>
 #include <acfutils/glew.h>
@@ -39,6 +40,7 @@
 #include <cglm/cglm.h>
 
 #include "atmo_xp11.h"
+#include "glpriv.h"
 #include "xplane.h"
 
 #define	UPD_INTVAL	100000		/* us */
@@ -109,8 +111,19 @@ static struct {
 	GLuint		tmp_tex[3];
 	GLuint		tmp_fbo[3];
 	GLsync		xfer_sync;
-	GLuint		smooth_prog;
-	GLuint		cleanup_prog;
+	GLint		smooth_prog;
+	struct {
+		GLint	pvm;
+		GLint	tex;
+		GLint	tex_sz;
+		GLint	smooth_val;
+	} smooth_prog_loc;
+	GLint		cleanup_prog;
+	struct {
+		GLint	pvm;
+		GLint	tex;
+		GLint	tex_sz;
+	} cleanup_prog_loc;
 } xp11_atmo;
 
 typedef enum {
@@ -155,6 +168,25 @@ static struct {
 		dr_t	kill_map_fms_line;
 	} EFIS;
 } drs;
+
+static const shader_info_t generic_vert_info =
+    { .filename = "generic.vert.spv" };
+static const shader_info_t cleanup_frag_info =
+    { .filename = "cleanup.frag.spv" };
+static const shader_info_t smooth_frag_info =
+    { .filename = "smooth.frag.spv" };
+
+static const shader_prog_info_t cleanup_prog_info = {
+    .progname = "atmo_xp11_cleanup",
+    .vert = &generic_vert_info,
+    .frag = &cleanup_frag_info
+};
+
+static const shader_prog_info_t smooth_prog_info = {
+    .progname = "atmo_xp11_cleanup",
+    .vert = &generic_vert_info,
+    .frag = &smooth_frag_info
+};
 
 static int
 debug_cmd_handler(XPLMCommandRef ref, XPLMCommandPhase phase, void *refcon)
@@ -218,16 +250,17 @@ atmo_xp11_probe(scan_line_t *sl)
 	double dir_rand2 = (sin(DEG2RAD(sl->dir.x) * 3.1767) *
 	    sin(DEG2RAD(sl->dir.x) * 14.459) *
 	    sin(DEG2RAD(sl->dir.x) * 34.252)) / 15.0;
+
+	double rhdg_left = DEG2RAD(sl->ant_rhdg - sl->shape.x);
+	double rhdg_right = DEG2RAD(sl->ant_rhdg + sl->shape.x);
+
 	double sin_rhdg = sin(DEG2RAD(sl->ant_rhdg));
-	double sin_rhdg_left = sl->vert_scan ? sin(DEG2RAD(sl->ant_rhdg -
-	    sl->shape.x)) : 0;
-	double sin_rhdg_right = sl->vert_scan ? sin(DEG2RAD(sl->ant_rhdg +
-	    sl->shape.x)) : 0;
+	double sin_rhdg_left = sl->vert_scan ? sin(rhdg_left) : 0;
+	double sin_rhdg_right = sl->vert_scan ? sin(rhdg_right) : 0;
+
 	double cos_rhdg = cos(DEG2RAD(sl->ant_rhdg));
-	double cos_rhdg_left = sl->vert_scan ? cos(DEG2RAD(sl->ant_rhdg -
-	    sl->shape.x)) : 0;
-	double cos_rhdg_right = sl->vert_scan ? cos(DEG2RAD(sl->ant_rhdg +
-	    sl->shape.x)) : 0;
+	double cos_rhdg_left = sl->vert_scan ? cos(rhdg_left) : 0;
+	double cos_rhdg_right = sl->vert_scan ? cos(rhdg_right) : 0;
 	double sin_pitch = sin(DEG2RAD(sl->dir.y));
 	double sin_pitch_up = !sl->vert_scan ? sin(DEG2RAD(sl->dir.y +
 	    sl->shape.y * (0.5 + dir_rand1))) : 0;
@@ -530,10 +563,10 @@ transfer_new_efis_frame(void)
 	glBindTexture(GL_TEXTURE_2D, xp11_atmo.tmp_tex[0]);
 
 	glUseProgram(xp11_atmo.cleanup_prog);
-	glUniformMatrix4fv(glGetUniformLocation(xp11_atmo.cleanup_prog, "pvm"),
+	glUniformMatrix4fv(xp11_atmo.cleanup_prog_loc.pvm,
 	    1, GL_FALSE, (GLfloat *)xp11_atmo.efis_pvm);
-	glUniform1i(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex"), 0);
-	glUniform2f(glGetUniformLocation(xp11_atmo.cleanup_prog, "tex_sz"),
+	glUniform1i(xp11_atmo.cleanup_prog_loc.tex, 0);
+	glUniform2f(xp11_atmo.cleanup_prog_loc.tex_sz,
 	    EFIS_WIDTH, EFIS_HEIGHT);
 	glutils_draw_quads(&xp11_atmo.efis_quads, xp11_atmo.cleanup_prog);
 
@@ -641,10 +674,8 @@ out:
 }
 
 atmo_t *
-atmo_xp11_init(const char *xpdir, const char *plugindir)
+atmo_xp11_init(void)
 {
-	char *path, *path2;
-
 	ASSERT(!inited);
 	inited = B_TRUE;
 
@@ -708,23 +739,25 @@ atmo_xp11_init(const char *xpdir, const char *plugindir)
 		xp11_atmo.precip_nodes[i] = VECT2(i, 0);
 	xp11_atmo.precip_nodes[4] = NULL_VECT2;
 
-	path = mkpathname(xpdir, plugindir, "data", "generic.vert", NULL);
-	path2 = mkpathname(xpdir, plugindir, "data", "cleanup.frag", NULL);
-	xp11_atmo.cleanup_prog = shader_prog_from_file("cleanup", path, path2,
-	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
-	lacf_free(path);
-	lacf_free(path2);
-	if (xp11_atmo.cleanup_prog == 0)
+	if (!reload_gl_prog(&xp11_atmo.cleanup_prog, &cleanup_prog_info) ||
+	    !reload_gl_prog(&xp11_atmo.smooth_prog, &smooth_prog_info))
 		goto errout;
 
-	path = mkpathname(xpdir, plugindir, "data", "generic.vert", NULL);
-	path2 = mkpathname(xpdir, plugindir, "data", "smooth.frag", NULL);
-	xp11_atmo.smooth_prog = shader_prog_from_file("smooth", path, path2,
-	    DEFAULT_VTX_ATTRIB_BINDINGS, NULL);
-	lacf_free(path);
-	lacf_free(path2);
-	if (xp11_atmo.smooth_prog == 0)
-		goto errout;
+	xp11_atmo.cleanup_prog_loc.pvm =
+	    glGetUniformLocation(xp11_atmo.cleanup_prog, "pvm");
+	xp11_atmo.cleanup_prog_loc.tex =
+	    glGetUniformLocation(xp11_atmo.cleanup_prog, "tex");
+	xp11_atmo.cleanup_prog_loc.tex_sz =
+	    glGetUniformLocation(xp11_atmo.cleanup_prog, "tex_sz");
+
+	xp11_atmo.smooth_prog_loc.pvm =
+	    glGetUniformLocation(xp11_atmo.smooth_prog, "pvm");
+	xp11_atmo.smooth_prog_loc.tex =
+	    glGetUniformLocation(xp11_atmo.smooth_prog, "tex");
+	xp11_atmo.smooth_prog_loc.tex_sz =
+	    glGetUniformLocation(xp11_atmo.smooth_prog, "tex_sz");
+	xp11_atmo.smooth_prog_loc.smooth_val =
+	    glGetUniformLocation(xp11_atmo.smooth_prog, "smooth_val");
 
 	return (&atmo);
 errout:

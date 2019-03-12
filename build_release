@@ -30,6 +30,7 @@ rm -rf "$OUTPUT_DIR" "$OUTPUT_DIR.zip"
 mkdir -p "$OUTPUT_DIR"
 
 ( cd qmake && ./build ) || exit 1
+( cd data && make ) || exit 1
 
 if [[ $(uname) = "Linux" ]]; then
 	$INSTALL -- "qmake/output/lin_x64/${OUTPUT_DIR}.xpl" \
@@ -43,8 +44,8 @@ else
 	    "$OUTPUT_DIR/mac_x64/${OUTPUT_DIR}.xpl"
 fi
 
-find data fonts -iname '*.opus' -or -iname '*.frag420' -or -iname '*.frag' \
-    -or -iname '*.vert' -or -iname '*.ttf' -or -iname '*.otf' | \
+find data/bin fonts -iname '*.opus' -or -iname '*.glsl*' -or -iname '*.spv' \
+    -or -iname '*.ttf' -or -iname '*.otf' | \
     while read; do
 	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
 done
