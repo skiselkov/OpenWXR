@@ -690,7 +690,9 @@ wxr_get_stab(const wxr_t *wxr, bool_t *pitch, bool_t *roll)
 static void
 apply_pbo_tex(GLuint pbo, GLuint tex, GLuint res_x, GLuint res_y)
 {
-	XPLMBindTexture2d(tex, GL_TEXTURE_2D);
+	ASSERT(pbo != 0);
+	ASSERT(tex != 0);
+	glBindTexture(GL_TEXTURE_2D, tex);
 	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, res_x, res_y, 0, GL_RGBA,
 	    GL_UNSIGNED_BYTE, NULL);
@@ -783,7 +785,7 @@ wxr_bind_tex(wxr_t *wxr, bool_t shadow_tex)
 		GLuint tex = wxr_get_cur_tex(wxr, shadow_tex);
 		ASSERT(tex != 0);
 		glActiveTexture(GL_TEXTURE0);
-		XPLMBindTexture2d(tex, GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, tex);
 	} else {
 		/* initial texture upload, do a sync upload */
 		ASSERT(wxr->cur_tex == 0);
@@ -792,29 +794,28 @@ wxr_bind_tex(wxr_t *wxr, bool_t shadow_tex)
 		glGenTextures(2, wxr->shadow_tex);
 
 		for (int i = 0; i < 2; i++) {
-			XPLMBindTexture2d(wxr->tex[i], GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, wxr->tex[i]);
 			setup_tex_common(GL_TEXTURE_2D);
-			XPLMBindTexture2d(wxr->shadow_tex[i], GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, wxr->shadow_tex[i]);
 			setup_tex_common(GL_TEXTURE_2D);
 		}
 
 		glActiveTexture(GL_TEXTURE0);
 
-		XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, wxr->tex[0]);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
 		    wxr->conf->res_x, wxr->conf->res_y, 0,
 		    GL_RGBA, GL_UNSIGNED_BYTE, wxr->samples);
 
-		XPLMBindTexture2d(wxr->shadow_tex[0], GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, wxr->shadow_tex[0]);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
 		    wxr->conf->res_x, wxr->conf->res_y, 0,
 		    GL_RGBA, GL_UNSIGNED_BYTE, wxr->shadow_samples);
 
-		if (!shadow_tex) {
-			XPLMBindTexture2d(wxr->tex[0], GL_TEXTURE_2D);
-		} else {
-			XPLMBindTexture2d(wxr->shadow_tex[0], GL_TEXTURE_2D);
-		}
+		if (!shadow_tex)
+			glBindTexture(GL_TEXTURE_2D, wxr->tex[0]);
+		else
+			glBindTexture(GL_TEXTURE_2D, wxr->shadow_tex[0]);
 	}
 }
 
