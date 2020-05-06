@@ -475,8 +475,6 @@ update_precip(void)
 			    tmp_0_alt, tmp_minus_20_alt, B_TRUE));
 		}
 	}
-
-	fx_lin_multi(0, xp11_atmo.precip_nodes, B_FALSE);
 }
 
 static void
