@@ -311,7 +311,7 @@ wxr_config(float d_t, const wxr_conf_t *mode, mode_aux_info_t *aux)
 
 	DELAYED_DR_OP(&sys.gain_dr,
 	    gain_ctl = dr_getf(&sys.gain_dr.dr));
-	if (gain_ctl == sys.gain_auto_pos)
+	if (fabs(gain_ctl - sys.gain_auto_pos) < 1e-5)
 		gain = DFL_GAIN;
 	else
 		gain = wavg(MIN_GAIN, MAX_GAIN, clamp(gain_ctl, 0, 1));
