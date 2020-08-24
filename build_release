@@ -24,9 +24,9 @@ Darwin)
 	;;
 esac
 
-if which glslang &> /dev/null && which glslangValidator &> /dev/null; then
+if ! which glslang &> /dev/null && ! which glslangValidator &> /dev/null; then
 	cat << EOF >&2
-Couldn't find glslang. Please download the Vulkan Developer tools from:
+Couldn't find the Vulkan SDK. Please download the Vulkan Developer tools from:
 https://vulkan.lunarg.com/
 Then symlink glslangValidator and spirv-cross in your \$PATH
 
