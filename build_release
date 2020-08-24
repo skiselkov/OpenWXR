@@ -26,7 +26,7 @@ esac
 
 if ! which glslang &> /dev/null && ! which glslangValidator &> /dev/null; then
 	cat << EOF >&2
-Couldn't find the Vulkan SDK. Please download the Vulkan Developer tools from:
+Couldn't find the Vulkan SDK. Please download the SDK from:
 https://vulkan.lunarg.com/
 Then symlink glslangValidator and spirv-cross in your \$PATH
 
