@@ -24,10 +24,17 @@ Darwin)
 	;;
 esac
 
-if ! which glslang &> /dev/null; then
-	echo "Couldn't find \"glslang\". Please download the Vulkan " \
-	    "Developer tools from https://vulkan.lunarg.com/ and symlink " \
-	    "symlink glslangValidator as \"glslang\" in your PATH."
+if which glslang &> /dev/null && which glslangValidator &> /dev/null; then
+	cat << EOF >&2
+Couldn't find glslang. Please download the Vulkan Developer tools from:
+https://vulkan.lunarg.com/
+Then symlink glslangValidator and spirv-cross in your \$PATH
+
+On Ubuntu, you can use this guide to install the Vulkan SDK as a package
+(see section "Install the SDK"):
+https://vulkan.lunarg.com/doc/sdk/1.2.148.1/linux/getting_started_ubuntu.html
+With the Ubuntu package, everything will be set up for you.
+EOF
 	exit 1
 fi
 
