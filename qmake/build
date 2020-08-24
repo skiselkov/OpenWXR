@@ -22,6 +22,7 @@
 
 # Locate libacfutils and build it if necessary
 LIBACFUTILS="$(qmake -query LIBACFUTILS)"
+OPENGPWS="$(qmake -query OPENGPWS)"
 HOST_OS="$(uname)"
 STRIP="strip"
 
@@ -31,6 +32,11 @@ output_dir="output"
 if [ "$LIBACFUTILS" = "**Unknown**" ]; then
 	echo "Please use \"qmake -set LIBACFUTILS <<path>>\" to " \
 	    "point to where you have libacfutils unpacked." >&2
+	exit 1
+fi
+if [ "$OPENGPWS" = "**Unknown**" ]; then
+	echo "Please use \"qmake -set OPENGPWS <<path>>\" to " \
+	    "point to where you have OpenGPWS unpacked." >&2
 	exit 1
 fi
 
