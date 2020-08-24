@@ -24,6 +24,13 @@ Darwin)
 	;;
 esac
 
+if ! which glslang &> /dev/null; then
+	echo "Couldn't find \"glslang\". Please download the Vulkan " \
+	    "Developer tools from https://vulkan.lunarg.com/ and symlink " \
+	    "symlink glslangValidator as \"glslang\" in your PATH."
+	exit 1
+fi
+
 set -e
 
 rm -rf "$OUTPUT_DIR" "$OUTPUT_DIR.zip"
