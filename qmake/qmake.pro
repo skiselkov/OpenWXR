@@ -41,8 +41,8 @@ QMAKE_CFLAGS += -O2 -std=c99 -g -W -Wall -Wextra -Werror -fvisibility=hidden \
 # Make sure to disable Qmake's own warnings system, because it overrides
 # our warning flags. This breaks CTASSERT, which relies on an unused local
 # typedef.
-QMAKE_CFLAGS_WARN_ON -= -W -Wall
-QMAKE_CXXFLAGS_WARN_ON -= -W -Wall
+QMAKE_CFLAGS_WARN_ON -= -W -Wall -Wextra
+QMAKE_CXXFLAGS_WARN_ON -= -W -Wall -Wextra
 
 # _GNU_SOURCE needed on Linux for getline()
 # DEBUG - used by our ASSERT macro
