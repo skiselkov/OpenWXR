@@ -168,7 +168,6 @@ else()
 	FIND_LIBRARY(LIBPNG_LIBRARY png16)
 	FIND_LIBRARY(ZLIB_LIBRARY z ${LIBACFUTILS}/zlib/zlib-linux-64/lib)
 	FIND_LIBRARY(LZMA_LIBRARY lzma)
-	FIND_LIBRARY(PTHREAD_NONSHARED pthread_nonshared)
 	FIND_LIBRARY(LIBC_NONSHARED c_nonshared)
 	target_link_libraries(openwxr
 	    ${LIBACFUTILS_LIBRARY}
@@ -182,7 +181,6 @@ else()
 	    # Need to forcibly shove this down cmake's throat
 	    "${LIBACFUTILS}/zlib/zlib-linux-64/lib/libz.a"
 	    "${LIBACFUTILS}/glew/glew-1.13.0-linux-64/install/lib64/libGLEWmx.a"
-	    ${PTHREAD_NONSHARED}
 	    ${LIBC_NONSHARED}
 	    ${LZMA_LIBRARY}
 	    )
