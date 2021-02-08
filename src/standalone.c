@@ -159,7 +159,7 @@ static struct {
 static XPLMPluginID openwxr = XPLM_NO_PLUGIN_ID;
 static void *atmo = NULL;
 static void *wxr = NULL;
-static openwxr_intf_t *intf = NULL;
+static openwxr_intf_t *wxr_intf = NULL;
 
 static const egpws_conf_t egpws_conf = { .type = EGPWS_DB_ONLY };
 static const egpws_range_t egpws_ranges[] = {
@@ -277,14 +277,14 @@ wxr_config(float d_t, const wxr_conf_t *mode, mode_aux_info_t *aux)
 		sys.power_on_time = 0;
 	}
 
-	intf->set_standby(wxr, stby);
-	intf->set_stab(wxr, aux->stab_lim.x, aux->stab_lim.y);
-	intf->set_acf_pos(wxr, pos, orient);
+	wxr_intf->set_standby(wxr, stby);
+	wxr_intf->set_stab(wxr, aux->stab_lim.x, aux->stab_lim.y);
+	wxr_intf->set_acf_pos(wxr, pos, orient);
 
 	if (sys.num_screens > 0)
-		intf->set_brightness(wxr, sys.screens[0].brt / 0.75);
+		wxr_intf->set_brightness(wxr, sys.screens[0].brt / 0.75);
 
-	intf->set_colors(wxr, aux->colors, aux->num_colors);
+	wxr_intf->set_colors(wxr, aux->colors, aux->num_colors);
 
 	DELAYED_DR_OP(&sys.range_dr, range = dr_geti(&sys.range_dr.dr));
 	range = clampi(range, 0, mode->num_ranges - 1);
@@ -292,22 +292,22 @@ wxr_config(float d_t, const wxr_conf_t *mode, mode_aux_info_t *aux)
 	range = delayed_ctl_geti(&sys.range_ctl);
 	sys.range = mode->ranges[range];
 
-	if (intf->get_scale(wxr) != range) {
+	if (wxr_intf->get_scale(wxr) != range) {
 		bool_t new_scale = (mode->ranges[range] !=
-		    mode->ranges[intf->get_scale(wxr)]);
+		    mode->ranges[wxr_intf->get_scale(wxr)]);
 
 		if (new_scale)
-			intf->clear_screen(wxr);
-		intf->set_scale(wxr, range);
+			wxr_intf->clear_screen(wxr);
+		wxr_intf->set_scale(wxr, range);
 		if (new_scale)
-			intf->clear_screen(wxr);
+			wxr_intf->clear_screen(wxr);
 	}
 
 	DELAYED_DR_OP(&sys.tilt_dr, tilt = dr_getf(&sys.tilt_dr.dr));
 	delayed_ctl_set(&sys.tilt_ctl, tilt);
 	tilt = delayed_ctl_get(&sys.tilt_ctl);
 	FILTER_IN_LIN(sys.tilt, tilt, d_t, sys.tilt_rate);
-	intf->set_ant_pitch(wxr, sys.tilt);
+	wxr_intf->set_ant_pitch(wxr, sys.tilt);
 
 	DELAYED_DR_OP(&sys.gain_dr,
 	    gain_ctl = dr_getf(&sys.gain_dr.dr));
@@ -315,7 +315,7 @@ wxr_config(float d_t, const wxr_conf_t *mode, mode_aux_info_t *aux)
 		gain = DFL_GAIN;
 	else
 		gain = wavg(MIN_GAIN, MAX_GAIN, clamp(gain_ctl, 0, 1));
-	intf->set_gain(wxr, gain);
+	wxr_intf->set_gain(wxr, gain);
 }
 
 static float
@@ -357,11 +357,11 @@ floop_cb(float d_t, float elapsed, int counter, void *refcon)
 	mode = &sys.modes[sys.cur_mode];
 	aux = &sys.aux[sys.cur_mode];
 	if (wxr != NULL && mode->num_ranges == 0) {
-		intf->fini(wxr);
+		wxr_intf->fini(wxr);
 		wxr = NULL;
 	}
 	if (wxr == NULL && mode->num_ranges != 0) {
-		wxr = intf->init(mode, atmo);
+		wxr = wxr_intf->init(mode, atmo);
 		ASSERT(wxr != NULL);
 	}
 	if (wxr != NULL)
@@ -426,7 +426,7 @@ draw_cb(XPLMDrawingPhase phase, int before, void *refcon)
 		double center_x = scr->x + scr->w / 2;
 		double sz = scr->h * scr->underscan;
 
-		intf->draw(wxr, VECT2(center_x - sz, scr->y),
+		wxr_intf->draw(wxr, VECT2(center_x - sz, scr->y),
 		    VECT2(2 * sz, sz));
 		mt_cairo_render_draw(scr->mtcr, VECT2(scr->x, scr->y),
 		    VECT2(scr->w, scr->h));
@@ -450,7 +450,7 @@ draw_debug_win(XPLMWindowID win, void *refcon)
 	height = top - bottom;
 
 	if (wxr != NULL)
-		intf->draw(wxr, VECT2(left, bottom), VECT2(width, height));
+		wxr_intf->draw(wxr, VECT2(left, bottom), VECT2(width, height));
 	mt_cairo_render_draw(scr->mtcr, VECT2(left, bottom),
 	    VECT2(width, height));
 }
@@ -526,7 +526,7 @@ render_ui(cairo_t *cr, wxr_scr_t *scr)
 	cairo_show_text(cr, buf);
 
 	if (wxr != NULL) {
-		double tilt = intf->get_ant_pitch(wxr);
+		double tilt = wxr_intf->get_ant_pitch(wxr);
 
 		if (tilt >= 0.05)
 			snprintf(buf, sizeof (buf), "%.1f\u2191", tilt);
@@ -742,8 +742,8 @@ sa_init(const conf_t *conf)
 	openwxr = XPLMFindPluginBySignature(OPENWXR_PLUGIN_SIG);
 	ASSERT(openwxr != XPLM_NO_PLUGIN_ID);
 
-	XPLMSendMessageToPlugin(openwxr, OPENWXR_INTF_GET, &intf);
-	ASSERT(intf != NULL);
+	XPLMSendMessageToPlugin(openwxr, OPENWXR_INTF_GET, &wxr_intf);
+	ASSERT(wxr_intf != NULL);
 	XPLMSendMessageToPlugin(openwxr, OPENWXR_ATMO_GET, &atmo);
 	ASSERT(atmo != NULL);
 	XPLMSendMessageToPlugin(openwxr, OPENWXR_ATMO_XP11_SET_EFIS,
@@ -782,10 +782,10 @@ sa_fini(void)
 	}
 
 	if (wxr != NULL) {
-		intf->fini(wxr);
+		wxr_intf->fini(wxr);
 		wxr = NULL;
 	}
-	intf = NULL;
+	wxr_intf = NULL;
 	atmo = NULL;
 
 	if (debug_win != NULL) {
