@@ -105,6 +105,7 @@ struct wxr_s {
 	unsigned		ant_pos_vert;
 	bool_t			scan_right;
 	scan_line_t		sl;
+	geo_pos2_t		*tp_in_pts;
 	egpws_terr_probe_t	tp;
 
 	/* unstructured, always safe to read & write */
@@ -208,7 +209,7 @@ prep_terr_probe_coords(wxr_t *wxr, vect2_t ant_dir, vect2_t degree_sz)
 			p.lon -= 360.0;
 		ASSERT(is_valid_lat(p.lat));
 		ASSERT(is_valid_lon(p.lon));
-		wxr->tp.in_pts[i] = p;
+		wxr->tp_in_pts[i] = p;
 	}
 }
 
@@ -282,8 +283,9 @@ wxr_worker(void *userinfo)
 	 */
 	if (wxr->tp.in_pts == NULL) {
 		wxr->tp.num_pts = wxr->conf->res_y;
-		wxr->tp.in_pts = safe_calloc(wxr->tp.num_pts,
-		    sizeof (*wxr->tp.in_pts));
+		wxr->tp_in_pts = safe_calloc(wxr->tp.num_pts,
+		    sizeof (*wxr->tp_in_pts));
+		wxr->tp.in_pts = wxr->tp_in_pts;
 		wxr->tp.out_elev = safe_calloc(wxr->tp.num_pts,
 		    sizeof (*wxr->tp.out_elev));
 		wxr->tp.out_norm = safe_calloc(wxr->tp.num_pts,
@@ -551,7 +553,7 @@ wxr_fini(wxr_t *wxr)
 	free(wxr->shadow_samples);
 	free(wxr->sl.energy_out);
 	free(wxr->sl.doppler_out);
-	free(wxr->tp.in_pts);
+	free(wxr->tp_in_pts);
 	free(wxr->tp.out_elev);
 	free(wxr->tp.out_norm);
 	free(wxr->tp.out_water);
