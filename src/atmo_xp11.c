@@ -146,7 +146,6 @@ static struct {
 	dr_t	wind_turb[3];		/* ratio 0..10 */
 	dr_t	shear_dir[3];		/* degrees relative */
 	dr_t	shear_spd[3];		/* knots */
-	dr_t	turb;			/* ratio 0..1 */
 	dr_t	render_type;
 
 	dr_t	temp_sl;
@@ -708,7 +707,6 @@ atmo_xp11_init(void)
 		fdr_find(&drs.shear_spd[i],
 		    "sim/weather/shear_speed_kt[%d]", i);
 	}
-	fdr_find(&drs.turb, "sim/weather/wind_turbulence_percent");
 
 	fdr_find(&drs.EFIS.instr_brt,
 	    "sim/cockpit2/switches/instrument_brightness_ratio");
