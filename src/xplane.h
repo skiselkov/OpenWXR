@@ -38,6 +38,8 @@ PLUGIN_API void XPluginReceiveMessage(XPLMPluginID from, int msg, void *param);
 const char *get_xpdir(void);
 const char *get_plugindir(void);
 
+int get_xpver(void);
+
 #ifdef __cplusplus
 }
 #endif

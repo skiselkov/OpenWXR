@@ -13,7 +13,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2018 Saso Kiselkov. All rights reserved.
+ * Copyright 2022 Saso Kiselkov. All rights reserved.
  */
 
 #include <errno.h>
@@ -50,7 +50,7 @@
 char			xpdir[512];
 char			plugindir[512];
 
-int			xp_ver, xplm_ver;
+static int		xp_ver, xplm_ver;
 XPLMHostApplicationID	host_id;
 static atmo_t		*atmo = NULL;
 
@@ -270,6 +270,12 @@ const char *
 get_plugindir(void)
 {
 	return (plugindir);
+}
+
+int
+get_xpver(void)
+{
+	return (xp_ver);
 }
 
 #if	IBM
