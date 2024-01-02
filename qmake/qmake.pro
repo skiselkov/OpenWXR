@@ -35,7 +35,7 @@ INCLUDEPATH += $$[OPENGPWS]/api
 # Needed for openwxr/xplane_api.h
 INCLUDEPATH += ../api
 
-QMAKE_CFLAGS += -O2 -std=c99 -g -W -Wall -Wextra -Werror -fvisibility=hidden \
+QMAKE_CFLAGS += -O2 -std=c11 -g -W -Wall -Wextra -Werror -fvisibility=hidden \
     -Wno-unused-local-typedefs -Wunused-result
 
 # Make sure to disable Qmake's own warnings system, because it overrides
