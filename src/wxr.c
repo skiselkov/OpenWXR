@@ -730,6 +730,7 @@ wxr_get_cur_tex(wxr_t *wxr, bool_t shadow_tex)
 		if (glClientWaitSync(wxr->upload_sync, 0, 0) !=
 		    GL_TIMEOUT_EXPIRED) {
 			/* Texture upload complete, apply the texture */
+			glDeleteSync(wxr->upload_sync);
 			wxr->upload_sync = 0;
 			wxr->cur_tex = !wxr->cur_tex;
 

@@ -666,6 +666,7 @@ update_cb(XPLMDrawingPhase phase, int before, void *refcon)
 				glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 			}
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+			glDeleteSync(xp11_atmo.xfer_sync);
 			xp11_atmo.xfer_sync = 0;
 		}
 	} else if (xp11_atmo.last_update + UPD_INTVAL <= now) {
