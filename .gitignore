@@ -4,9 +4,9 @@ Makefile
 CMakeFiles
 bin
 .DS_Store
-qmake/object_script.win.xpl.Debug
-qmake/object_script.win.xpl.Release
-qmake/output/
-qmake/win.xpl_resource.rc
 OpenWXR.zip
 OpenWXR
+src/libOpenWXR.xpl.dll.a
+mac_x64
+lin_x64
+win_x64

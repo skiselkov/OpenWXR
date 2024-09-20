@@ -12,28 +12,67 @@
 #
 # CDDL HEADER END
 
-# Copyright 2018 Saso Kiselkov. All rights reserved.
+# Copyright 2024 Saso Kiselkov. All rights reserved.
+
+function my_realpath() {
+	[[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
+}
 
 OUTPUT_DIR="OpenWXR"
-case $(uname) in
+OS="$(uname)"
+
+case "$OS" in
 Darwin)
 	INSTALL="install -m 644"
+	REALPATH=my_realpath
 	;;
 *)
 	INSTALL="install -D -m 644"
+	REALPATH=realpath
 	;;
 esac
+
+while getopts "A:a:g:h" opt; do
+	case "$opt" in
+	A)
+		ACF_TYPE="$OPTARG"
+		;;
+	a)
+		LIBACFUTILS="$(${REALPATH} "$OPTARG")"
+		;;
+	g)
+		OPENGPWS="$(${REALPATH} "$OPTARG")"
+		;;
+	h)
+		cat << EOF
+Usage: $0 -a <libacfutils>
+    -a <libacfutils> : path to built libacfutils repo
+EOF
+		exit
+		;;
+	*)
+		echo "Invalid option -$OPTARG" >&2
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "$LIBACFUTILS" ]; then
+	echo "Missing mandatory argument -a." \
+	    "Try $0 -h for more information" >&2
+	exit 1
+fi
+if [ -z "$OPENGPWS" ]; then
+	echo "Missing mandatory argument -g." \
+	    "Try $0 -h for more information" >&2
+	exit 1
+fi
 
 if ! which glslang &> /dev/null && ! which glslangValidator &> /dev/null; then
 	cat << EOF >&2
 Couldn't find the Vulkan SDK. Please download the SDK from:
-https://vulkan.lunarg.com/
+https://vulkan.lunarg.com/sdk/home
 Then symlink glslangValidator and spirv-cross in your \$PATH
-
-On Ubuntu, you can use this guide to install the Vulkan SDK as a package
-(see section "Install the SDK"):
-https://vulkan.lunarg.com/doc/sdk/1.2.148.1/linux/getting_started_ubuntu.html
-With the Ubuntu package, everything will be set up for you.
 EOF
 	exit 1
 fi
@@ -43,25 +82,47 @@ set -e
 rm -rf "$OUTPUT_DIR" "$OUTPUT_DIR.zip"
 mkdir -p "$OUTPUT_DIR"
 
-( cd qmake && ./build ) || exit 1
+if [[ "$OS" = "Darwin" ]]; then
+	NCPUS=$(( $(sysctl -n hw.ncpu) + 1 ))
+	rm -f CMakeCache.txt
+	( cd src && rm -f CMakeCache.txt && \
+	    cmake . -DLIBACFUTILS="${LIBACFUTILS}" \
+	    -DOPENGPWS="$OPENGPWS" \
+	    -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" && \
+	    make -j "$NCPUS" ) || exit 1
+else
+	NCPUS=$(( $(grep 'processor[[:space:]]\+:' /proc/cpuinfo  | wc -l) + \
+	    1 ))
+	( cd src && rm -f CMakeCache.txt && \
+	    cmake . -DLIBACFUTILS="${LIBACFUTILS}" \
+	    -DOPENGPWS="$OPENGPWS" && \
+	    make -j "${NCPUS}" ) || exit 1
+	( cd src && rm -f CMakeCache.txt && \
+	    cmake . -DLIBACFUTILS="${LIBACFUTILS}" \
+	    -DOPENGPWS="$OPENGPWS" \
+	    -DCMAKE_TOOLCHAIN_FILE="XCompile.cmake" \
+	    -DHOST=x86_64-w64-mingw32 && \
+	    make -j "${NCPUS}" && \
+	    "$LIBACFUTILS/tools/mksyms" "../win_x64/OpenWXR.xpl" > \
+	    "../win_x64/syms.txt" ) || exit 1
+fi
 
 if [[ $(uname) = Linux ]]; then
 	( cd data && make ) || exit 1
 fi
 
 if [[ $(uname) = "Linux" ]]; then
-	$INSTALL -- "qmake/output/lin_x64/${OUTPUT_DIR}.xpl" \
+	$INSTALL -- "lin_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/lin_x64/${OUTPUT_DIR}.xpl"
-	$INSTALL -- "qmake/output/win_x64/${OUTPUT_DIR}.xpl" \
+	$INSTALL -- "win_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/win_x64/${OUTPUT_DIR}.xpl"
-	$INSTALL -- "qmake/output/win_x64/syms.txt" \
-	    "$OUTPUT_DIR/win_x64/syms.txt"
+	$INSTALL -- "win_x64/syms.txt" "$OUTPUT_DIR/win_x64/syms.txt"
 else
 	mkdir -p "$OUTPUT_DIR/mac_x64" \
 	    "$OUTPUT_DIR/data" \
 	    "$OUTPUT_DIR/openwxr" \
 	    "$OUTPUT_DIR/fonts/Inconsolata"
-	$INSTALL -- "qmake/output/mac_x64/${OUTPUT_DIR}.xpl" \
+	$INSTALL -- "mac_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/mac_x64/${OUTPUT_DIR}.xpl"
 fi
 
@@ -71,15 +132,7 @@ find data/bin fonts -iname '*.opus' -or -iname '*.glsl*' -or -iname '*.spv' \
 	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
 done
 
-while getopts "a:" opt; do
-	case "$opt" in
-	a)
-		ACF_TYPE="$OPTARG"
-		;;
-	esac
-done
-
-if [[ "$ACF_TYPE" != "" ]]; then
+if [ -n "$ACF_TYPE" ]; then
 	cp "acf-configs/$ACF_TYPE/OpenWXR.cfg" "$OUTPUT_DIR"
 fi
 
