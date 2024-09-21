@@ -133,6 +133,9 @@ if(WIN32)
 	    ${OPENGL_LIBRARY}
 	    ${DEP_LIBS}
 	)
+	set_target_properties(openwxr PROPERTIES LINK_FLAGS
+	    "${CMAKE_SHARED_LINKER_FLAGS} -undefined_warning \
+	    -fvisibility=hidden -static-libgcc -static-libstdc++")
 elseif(APPLE)
 	find_library(XPLM_LIBRARY XPLM "${LIBACFUTILS}/SDK/Libraries/Mac")
 	find_library(XPWIDGETS_LIBRARY XPWidgets
@@ -145,11 +148,17 @@ elseif(APPLE)
 	    ${OPENGL_FRAMEWORK}
 	    ${DEP_LIBS}
 	)
+	set_target_properties(openwxr PROPERTIES LINK_FLAGS
+	    "${CMAKE_SHARED_LINKER_FLAGS} -fvisibility=hidden -bundle")
 else()
 	target_link_libraries(openwxr
 	    ${LIBACFUTILS_LIBRARY}
 	    ${DEP_LIBS}
 	)
+	set_target_properties(openwxr PROPERTIES LINK_FLAGS
+	    "${CMAKE_SHARED_LINKER_FLAGS} -rdynamic -nodefaultlibs \
+	    -undefined_warning -fPIC -fvisibility=hidden \
+	    -static-libgcc -static-libstdc++")
 endif()
 
 set_target_properties(openwxr PROPERTIES PREFIX "")
