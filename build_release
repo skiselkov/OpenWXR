@@ -67,7 +67,8 @@ if [ -z "$OPENGPWS" ]; then
 	exit 1
 fi
 
-if ! which glslang &> /dev/null && ! which glslangValidator &> /dev/null; then
+if [[ $(uname) = Linux ]] && ! which glslang &> /dev/null && \
+    ! which glslangValidator &> /dev/null; then
 	cat << EOF >&2
 Couldn't find the Vulkan SDK. Please download the SDK from:
 https://vulkan.lunarg.com/sdk/home
@@ -106,11 +107,9 @@ else
 	    "../win_x64/syms.txt" ) || exit 1
 fi
 
-if [[ $(uname) = Linux ]]; then
+if [[ "$OS" = Linux ]]; then
 	( cd data && make ) || exit 1
-fi
 
-if [[ $(uname) = "Linux" ]]; then
 	$INSTALL -- "lin_x64/${OUTPUT_DIR}.xpl" \
 	    "$OUTPUT_DIR/lin_x64/${OUTPUT_DIR}.xpl"
 	$INSTALL -- "win_x64/${OUTPUT_DIR}.xpl" \
@@ -125,7 +124,13 @@ else
 	    "$OUTPUT_DIR/mac_x64/${OUTPUT_DIR}.xpl"
 fi
 
-find data/bin fonts -iname '*.opus' -or -iname '*.glsl*' -or -iname '*.spv' \
+if [[ "$OS" = Linux ]]; then
+	find data/bin | while read; do
+		$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
+	done
+fi
+
+find fonts -iname '*.opus' -or -iname '*.glsl*' -or -iname '*.spv' \
     -or -iname '*.ttf' -or -iname '*.otf' | \
     while read; do
 	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
