@@ -125,13 +125,11 @@ else
 fi
 
 if [[ "$OS" = Linux ]]; then
-	find data/bin | while read; do
-		$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
-	done
+	DATA_BIN_DIR="data/bin"
 fi
 
-find fonts -iname '*.opus' -or -iname '*.glsl*' -or -iname '*.spv' \
-    -or -iname '*.ttf' -or -iname '*.otf' | \
+find $DATA_BIN_DIR fonts -iname '*.opus' -or -iname '*.glsl*' -or \
+    -iname '*.spv' -or -iname '*.ttf' -or -iname '*.otf' | \
     while read; do
 	$INSTALL -- "$REPLY" "$OUTPUT_DIR/$REPLY"
 done
