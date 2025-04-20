@@ -32,6 +32,7 @@
 #include <acfutils/glew.h>
 #include <acfutils/helpers.h>
 #include <acfutils/log.h>
+#include <acfutils/mt_cairo_render.h>
 #include <acfutils/time.h>
 #include <acfutils/thread.h>
 
@@ -215,6 +216,7 @@ XPluginEnable(void)
 
 	conf_get_b(conf, "standalone", &standalone);
 	if (standalone) {
+		mt_cairo_render_glob_init(true);
 		if (!fontmgr_init(xpdir, plugindir))
 			goto errout;
 		if (!sa_init(conf))
