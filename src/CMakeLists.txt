@@ -141,10 +141,12 @@ elseif(APPLE)
 	find_library(XPWIDGETS_LIBRARY XPWidgets
 	    "${LIBACFUTILS}/SDK/Libraries/Mac")
 	find_library(OPENGL_FRAMEWORK OpenGL)
+	find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
 	target_link_libraries(openwxr
 	    ${LIBACFUTILS_LIBRARY}
 	    ${XPLM_LIBRARY}
 	    ${XPWIDGETS_LIBRARY}
+	    ${COREFOUNDATION_FRAMEWORK}
 	    ${OPENGL_FRAMEWORK}
 	    ${DEP_LIBS}
 	)
