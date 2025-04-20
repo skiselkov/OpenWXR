@@ -412,6 +412,14 @@ update_efis(void)
 }
 
 static void
+force_increasing_x(const vect2_t REQ_PTR(v1), vect2_t REQ_PTR(v2))
+{
+	if (v1->x >= v2->x) {
+		v2->x = v1->x + 1.0;
+	}
+}
+
+static void
 update_precip(void)
 {
 	double cloud_z[2] = { 0, 0 };
@@ -483,6 +491,14 @@ update_precip(void)
 			    (1 - iter_fract(xp11_atmo.precip_nodes[i].x,
 			    tmp_0_alt, tmp_minus_20_alt, B_TRUE));
 		}
+		// Make sure that the precip nodes are properly ordered.
+		// XP12 seems to sometimes not do this right.
+		force_increasing_x(&xp11_atmo.precip_nodes[0],
+		    &xp11_atmo.precip_nodes[1]);
+		force_increasing_x(&xp11_atmo.precip_nodes[1],
+		    &xp11_atmo.precip_nodes[2]);
+		force_increasing_x(&xp11_atmo.precip_nodes[2],
+		    &xp11_atmo.precip_nodes[3]);
 	}
 }
 
